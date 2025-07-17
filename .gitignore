@@ -1,0 +1,8 @@
+# Local files
+**/temp/**
+**/venv/** 
+**/bin/** 
+**/secret/**
+**/__pycache__/**
+todo.md
+

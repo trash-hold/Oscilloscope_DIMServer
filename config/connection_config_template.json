@@ -1,0 +1,6 @@
+{
+    "scope_ip": "<insert device IP>",
+    "scope_port": 80,
+    "dim_server_endpoint": "tcp://localhost:5555",
+    "ack_timeout_ms": 5000
+}
