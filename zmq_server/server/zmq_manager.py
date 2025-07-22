@@ -4,7 +4,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
 import msgpack
 import msgpack_numpy as mpack_np
 
-from ..manager.measurement_manager import MeasurementManager 
+from manager.measurement_manager import MeasurementManager 
 
 # ===================================================================
 # The Worker: Performs the blocking measurement task

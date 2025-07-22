@@ -1,5 +1,5 @@
 
-from zmq_server.drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
+from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
 import json     # For reading config files
 import time     # For implementing timeouts
 

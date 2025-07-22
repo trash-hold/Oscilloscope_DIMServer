@@ -1,4 +1,4 @@
-from zmq_server.gui.simple_gui import OscilloscopeControlGUI
+from gui.simple_gui import OscilloscopeControlGUI
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QPushButton, QLabel, QTextEdit

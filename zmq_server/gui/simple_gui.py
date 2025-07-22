@@ -4,8 +4,7 @@ import time
 import threading
 import numpy as np
 import zmq
-import msgpack
-import msgpack_numpy as mpack_np
+
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, 
@@ -14,9 +13,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
 from PySide6.QtGui import QFont
 
-from ..drivers.TDS3054C import TDS3054C
-from ..manager.measurement_manager import MeasurementManager
-from ..server.zmq_manager import *
+from drivers.TDS3054C import TDS3054C
+from manager.measurement_manager import MeasurementManager
+from server.zmq_manager import *
 
 
 class OscilloscopeControlGUI(QMainWindow):
