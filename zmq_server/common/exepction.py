@@ -43,6 +43,20 @@ class ParsingError(DeviceError):
     """For errors when decoding or parsing a response from the device."""
     pass
 
+class ConfigurationError(DeviceError):
+    """Raised when a device cannot be configured correctly from a file."""
+    pass
+
+#====================================================================================
+# Acquisition Errors 
+#====================================================================================
+class AcquisitionError(DeviceError):
+    """A general error during a data acquisition sequence."""
+    pass
+
+class AcquisitionTimeoutError(AcquisitionError): # Note: It inherits from AcquisitionError
+    """Raised specifically when an acquisition times out waiting for a trigger."""
+    pass
 
 #====================================================================================
 # ZMQ Server errors

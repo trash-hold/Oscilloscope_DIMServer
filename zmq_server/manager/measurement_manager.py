@@ -2,6 +2,7 @@
 from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
 import json     # For reading config files
 import time     # For implementing timeouts
+from common.exepction import *
 
 class MeasurementManager():
     def __init__(self, dev:Oscilloscope, json_file:str = None):
@@ -10,34 +11,39 @@ class MeasurementManager():
         self.config = self.load_config(json_file) if json_file is not None else None
 
     def start_connection(self) -> None:
-        self.dev.start_connection()
+        try:
+            self.dev.start_connection()
+        except DeviceConnectionError as e:
+            raise e
 
     def load_config(self, json_file: str) -> dict:
         '''
         Connect and configure the oscilloscope according to the defined json file.
         '''
+        try: 
+            # Load the file
+            config = None
+            with open(json_file, 'r') as file:
+                config = json.load(file)
+                file.close()
+
+            # Connect to device
+            if self.dev is None:
+                raise ConfigurationError("Device handle has not been provided to the manager.")
+            
+            self.dev.test_connection() 
+
+            self.dev.config(json_file)
+            self.config = config
+
+            print("Successfully configured the oscilloscope!")
+            return config
         
-        # Load the file
-        config = None
-        with open(json_file, 'r') as file:
-            config = json.load(file)
-            file.close()
-
-        # Connect to device
-        if self.dev is None:
-            try:
-                if self.dev.test_connection() == False:
-                    raise ConnectionError("COM: The port specified in the config file is wrong or unavailable!")
-
-                self.dev.config(json_file)
-
-            except:
-                raise ConnectionError("COM: The port specified in the config file is wrong or unavailable!")
-
-        self.config = config
-
-        print("Successfully configured the oscilloscope!")
-        return config
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            raise ConfigurationError(f"Failed to load or parse config file: {json_file}") from e
+        
+        except DeviceError as e:
+            raise ConfigurationError("Failed to configure the device. Check connection and config values.") from e
     
 
     
@@ -45,45 +51,48 @@ class MeasurementManager():
         '''
         Runs oscilloscope in single sequence mode and waits for a single acquistion -- has timeout feature. If you want to turn off the timeout set it to None
         '''
-        dev = self.dev
+        try:
+            dev = self.dev
 
-        # Set oscilloscope into single sequence mode
-        # ============================================
-        # 1. Stop any current acquisition
-        dev.write("ACQ:STATE STOP")
-        # 2. Turn on stop after single sequence
-        dev.write("ACQ:STOPA SEQ")
-        # 3. Acquire data only on one sample
-        dev.write("ACQ:MODE SAMPLE")
+            # Set oscilloscope into single sequence mode
+            # ============================================
+            # 1. Stop any current acquisition
+            dev.write("ACQ:STATE STOP")
+            # 2. Turn on stop after single sequence
+            dev.write("ACQ:STOPA SEQ")
+            # 3. Acquire data only on one sample
+            dev.write("ACQ:MODE SAMPLE")
 
-        print("Starting acquisition")
+            print("Starting acquisition")
 
 
-        # Get the samples
-        # ============================================
-        dev.write("ACQ:STATE ON")
+            # Get the samples
+            # ============================================
+            dev.write("ACQ:STATE ON")
+            
+            # Variable for checking timeout
+            start_sample = time.time()
+            curr_sample = start_sample
+            query_no = 1
+            state = 1
+
+            # Loop for getting new sample
+            while(curr_sample - start_sample < timeout):
+                curr_sample = time.time()
+
+                # Check oscilloscope state every 10ms
+                if ((curr_sample - start_sample)*100 > query_no): 
+                    query_no += 1
+                    state = dev.query("BUSY?")
+                    # Oscilloscope no longer busy = finished acq
+                    if int(state) == 0:
+                        # Make measurment
+                        res = dev.get_waveform(1)
+                        return res
+            
+            # If no signal was caught
+            raise AcquisitionTimeoutError(f"Acquisition timed out after {timeout} seconds.")
         
-        # Variable for checking timeout
-        start_sample = time.time()
-        curr_sample = start_sample
-        query_no = 1
-        state = 1
-
-        # Loop for getting new sample
-        while(curr_sample - start_sample < timeout):
-            curr_sample = time.time()
-
-            # Check oscilloscope state every 10ms
-            if ((curr_sample - start_sample)*100 > query_no): 
-                query_no += 1
-                state = dev.query("BUSY?")
-                # Oscilloscope no longer busy = finished acq
-                if int(state) == 0:
-                    # Make measurment
-                    res = dev.get_waveform(1)
-                    return res
-        
-        # If no signal was caught
-        print("FAILED ACQ")
-        return None
+        except (DeviceCommandError, ValueError) as e:
+            raise AcquisitionError("A device error occurred during the acquisition sequence.") from e
                 
