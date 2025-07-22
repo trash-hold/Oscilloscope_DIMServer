@@ -61,3 +61,10 @@ class AcquisitionTimeoutError(AcquisitionError): # Note: It inherits from Acquis
 #====================================================================================
 # ZMQ Server errors
 #====================================================================================
+class ZMQCommunicationError(DeviceError):
+    """A base class for errors during ZMQ communication."""
+    pass
+
+class ZMQTimeoutError(ZMQCommunicationError):
+    """Raised when a ZMQ socket poll times out waiting for a reply."""
+    pass
