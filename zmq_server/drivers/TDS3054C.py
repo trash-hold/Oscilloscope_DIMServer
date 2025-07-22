@@ -2,6 +2,7 @@ from .AbstractInterfaces import Oscilloscope
 import socket   # For providing connection to the HTTP server
 import numpy as np
 from bs4 import BeautifulSoup   # For decoding HTML response
+from common.exepction import * 
 
 
 class EthernetSocket():
@@ -21,9 +22,9 @@ class EthernetSocket():
         '''
         # Check if socket was well defined
         if self.ip is None:
-            return None
+            raise DeviceConnectionError("FATAL ERROR: Haven't provided IP")
         if self.port is None or isinstance(self.port, int) == False:
-            return None
+            raise DeviceConnectionError("FATAL ERROR: Haven't provided PORT")
         
         # Connect to the defined socket
         try:
@@ -34,9 +35,8 @@ class EthernetSocket():
             self.current_connection = s
             return s
 
-        except Exception as e:
-            print("CANNOT CONNECT TO THE SOCKET: {0}".format(e.args))
-            return None
+        except (socket.timeout, OSError) as e:
+            raise DeviceConnectionError(f"Cannot connect to device at {self.ip}:{self.port}") from e
         
     def close(self):
         '''
@@ -57,26 +57,28 @@ class EthernetSocket():
         '''
         Opens connection, sends request and returns byte response
         '''
-        # Open connection
-        s = self.connect()
-        if s is None:
-            print("Failed to read msg. Connection error!")
-            return 
-        
-        # Send bytes
-        s.sendall(req_bytes)
-        
-        # Read response
-        full_response_bytes = b''
-        while True:
-            chunk = s.recv(8192) # Larger buffer in case of waveform data
-            if not chunk:
-                break
-            full_response_bytes += chunk
+        try:
+            # Open connection
+            s = self.connect()
+            
+            # Send bytes
+            s.sendall(req_bytes)
+            
+            # Read response
+            full_response_bytes = b''
+            while True:
+                chunk = s.recv(8192) # Larger buffer in case of waveform data
+                if not chunk:
+                    break
+                full_response_bytes += chunk
 
 
-        self.close()
-        return full_response_bytes
+            self.close()
+            return full_response_bytes
+        except (DeviceConnectionError, socket.timeout, OSError) as e:
+            self.close()
+            raise DeviceCommunicationError("Failed to send or receive data from device.") from e
+
 
 
 class TDS3054C(Oscilloscope):
@@ -105,59 +107,72 @@ class TDS3054C(Oscilloscope):
         '''
         Checks if the connection can be established and if the device is TDS3054C 
         '''
-        self.make_connection()
+        try:
+            self.make_connection()
 
-        device_num = self.query("*IDN?")
-        print("Connected to: {0}".format(device_num))
+            device_num = self.query("*IDN?")
+            print("Connected to: {0}".format(device_num))
+            
+            if "TDS3054C" in device_num:
+                return True
+            
+            raise UnexpectedDeviceError(f"The connected device identifies as '{device_num}', not TDS3054C.")
         
-        if "TDS3054C" in device_num:
-            return True
-        
-        return False
+        except DeviceError as e:
+            raise DeviceCommandError("Failed during test connection.") from e
 
-    def set_channel(self, channel: int) -> bool:
+    def set_channel(self, channel: int) -> None:
         '''
         Validate channel number and set the oscilloscope. Available values are: 1, 2, 3, 4
         '''
 
         if channel is None:
-            print("Tranmission canceled! No channel defined for the write operation")
-            return False
+            raise InvalidParameterError("Error! Haven't set the channel number for the operation")
 
         elif channel not in [1, 2, 3, 4]:
-            return False
+            raise InvalidParameterError(f"Error! Channel number should be in range 1-2, given {channel}")
 
-        msg = self.build_msg('DATA:SOURCE CH' + str(channel))
-        response = self.socket.send_request(msg)
+        try:
+            msg = self.build_msg('DATA:SOURCE CH' + str(channel))
+            self.socket.send_request(msg)
 
-        return True
+        except DeviceCommunicationError as e:
+            raise DeviceCommandError(f"Failed to set channel to {channel}.") from e
     
     def query(self, cmd: str, channel: int = None) -> str:
         '''
         Send data and await response
         '''
         # If channel is None then the command is a general request such as *IDN?
-        if channel is not None:
-            if self.set_channel(channel) == False:
-                print("Transmission canceled: Error during picking the channel!")
-                return None
-
-        # Build request contents
-        msg = self.build_msg(cmd)
-        response = self.socket.send_request(msg)
         
-        return self.decode_msg(response)
+        try:
+            if channel is not None:
+                self.set_channel(channel)
+
+
+            # Build request contents
+            msg = self.build_msg(cmd)
+            response = self.socket.send_request(msg)
+            
+            return self.decode_msg(response)
+    
+        except (DeviceCommunicationError, InvalidParameterError, ParsingError) as e:
+            raise DeviceCommandError(f"Query command '{cmd}' failed.") from e
     
     def write(self, cmd: str, channel: int = None) -> None:
         '''
         Equivalent to set operation, returns nothing 
         '''
-        if channel is not None:
-            self.set_channel(channel)
+        try:
+            if channel is not None:
+                self.set_channel(channel)
 
-        # Build request contents
-        msg = self.build_msg(cmd)
-        response = self.socket.send_request(msg)
+            # Build request contents
+            msg = self.build_msg(cmd)
+            response = self.socket.send_request(msg)
+
+        except (DeviceCommunicationError, InvalidParameterError) as e:
+            raise DeviceCommandError(f"Write command '{cmd}' failed.") from e
 
     def configure(self, json_file) -> None:
         print("TBI")
@@ -170,49 +185,52 @@ class TDS3054C(Oscilloscope):
         ASCII -- data is incoming as ASCII characters
         BIN   -- data is coming as signed integers MSB first. One data point is two bytes.
         '''
+        try:
+            if self.set_channel(channel) == False:
+                return None
+            
+            # Set encoding
+            if dataformat == 'ASCII':
+                self.write('DATA:ENCDG ASCII')
+            elif dataformat == 'BIN':
+                self.write('DATA:ENCDG RIB')
+                self.write('DATA:WID 2')
+            else:
+                print("Transmission canceled! Incorrect dataformat: {0}".format(dataformat))
 
-        if self.set_channel(channel) == False:
-            return None
+            # These values are needed to convert raw ADC levels to Volts
+            ymult_str = self.query('WFMPRE:YMULT?')
+            yzero_str = self.query('WFMPRE:YZERO?')
+            yoff_str = self.query('WFMPRE:YOFF?')
+
+            ymult = float(ymult_str)
+            yzero = float(yzero_str)
+            yoff = float(yoff_str)
+
+            print("TBI time step")
+
+            # Acquire the data points
+            raw_data = self.query('CURVE?')
+
+            true_waveform = []
+            # Process the data
+            if dataformat == 'ASCII':
+                raw_points = [int(p) for p in raw_data.split(',')]
         
-        # Set encoding
-        if dataformat == 'ASCII':
-            self.write('DATA:ENCDG ASCII')
-        elif dataformat == 'BIN':
-            self.write('DATA:ENCDG RIB')
-            self.write('DATA:WID 2')
-        else:
-            print("Transmission canceled! Incorrect dataformat: {0}".format(dataformat))
+                # Apply the scaling formula t
+                true_waveform = [(point - yoff) * ymult + yzero for point in raw_points]
 
-        # These values are needed to convert raw ADC levels to Volts
-        ymult_str = self.query('WFMPRE:YMULT?')
-        yzero_str = self.query('WFMPRE:YZERO?')
-        yoff_str = self.query('WFMPRE:YOFF?')
+            elif dataformat == 'BIN':
+                print("TBI")
+                return None
 
-        ymult = float(ymult_str)
-        yzero = float(yzero_str)
-        yoff = float(yoff_str)
-
-        print("TBI time step")
-
-        # Acquire the data points
-        raw_data = self.query('CURVE?')
-
-        true_waveform = []
-        # Process the data
-        if dataformat == 'ASCII':
-            raw_points = [int(p) for p in raw_data.split(',')]
-    
-            # Apply the scaling formula t
-            true_waveform = [(point - yoff) * ymult + yzero for point in raw_points]
-
-        elif dataformat == 'BIN':
-            print("TBI")
-            return None
-
-        if true_waveform is not None:
-            return np.array(true_waveform, dtype=np.float64)
-        else:
-            return None
+            if true_waveform is not None:
+                return np.array(true_waveform, dtype=np.float64)
+            else:
+                return None
+        
+        except (DeviceCommandError, ValueError) as e:
+            raise DeviceCommandError(f"Failed to get waveform from channel {channel}.") from e
 
     def build_msg(self, command: str) -> str:
         '''
@@ -247,5 +265,5 @@ class TDS3054C(Oscilloscope):
             return response_textarea.get_text(strip=True)
         else:
             # If parsing fails, return the raw HTML for debugging
-            print(f"ERROR: Could not find response textarea. Raw HTML: {html_bytes.decode(errors='ignore')}")
-            return None
+            print(f"Raw HTML: {html_bytes.decode(errors='ignore')}")
+            raise ParsingError("Could not find response textarea in device's HTML response.")

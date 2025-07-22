@@ -44,6 +44,7 @@ file(GLOB_RECURSE SOURCES "src/*.cxx")
 # Include the FetchContent module to manage dependencies
 include(FetchContent)
 
+find_package(Threads REQUIRED)
 # Declare the cppzmq dependency from GitHub
 FetchContent_Declare(
   cppzmq
@@ -68,5 +69,8 @@ FetchContent_MakeAvailable(cppzmq libzmq)
 add_executable(my_dim_server ${SOURCES})
 
 # Link against the DIM library
-target_link_libraries(my_dim_server PRIVATE ${DIM_LIBRARY})
-target_link_libraries(my_dim_server PRIVATE cppzmq)
+target_link_libraries(my_dim_server PRIVATE
+ ${DIM_LIBRARY}
+ cppzmq
+ Threads::Threads
+ )
