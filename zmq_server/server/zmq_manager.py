@@ -1,8 +1,10 @@
 import zmq
 import time
-from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
+import logging      # For Error handling
+from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer   # Integration with GUI
 import msgpack
 import msgpack_numpy as mpack_np
+from common.exepction import *
 
 from manager.measurement_manager import MeasurementManager 
 
@@ -15,7 +17,7 @@ class MeasurementWorker(QObject):
     This includes a metadata handshake, data transfer, and waiting for an ACK.
     """
     cycle_complete = Signal()
-    error = Signal(str)
+    error = Signal(dict)
     status_update = Signal(str)
 
     def __init__(self, manager: MeasurementManager, dim_endpoint: str, timeout_ms: int):
@@ -39,9 +41,6 @@ class MeasurementWorker(QObject):
             # 1. Acquire data from the oscilloscope
             self.status_update.emit("Acquiring data from oscilloscope...")
             waveform_data = self.manager.sample(timeout=10)
-            if waveform_data is None:
-                self.error.emit("Oscilloscope acquisition timed out.")
-                return
 
             # 2. Stage 1: Send metadata and wait for "READY"
             metadata = {
@@ -52,8 +51,8 @@ class MeasurementWorker(QObject):
             self.status_update.emit(f"Sending metadata: {metadata}")
             self.socket.send_json(metadata)
 
-            if not self.wait_for_reply(b"READY", "Timeout waiting for READY from DIM server."):
-                return
+            self.wait_for_reply(b"READY")
+
 
             # 3. Stage 2: Send waveform data and wait for "ACK"
             self.status_update.emit("Sending waveform data...")
@@ -63,38 +62,48 @@ class MeasurementWorker(QObject):
             packed_data = msgpack.packb(waveform_list, use_bin_type=True)
             self.socket.send(packed_data, copy=False)
 
-            if not self.wait_for_reply(b"ACK", "Timeout waiting for ACK from DIM server."):
-                return
+            self.wait_for_reply(b"ACK")
 
             # 4. If all successful, signal completion
             self.status_update.emit("Cycle complete. ACK received.")
             self.cycle_complete.emit()
 
-        except Exception as e:
-            self.error.emit(f"An unexpected error occurred: {e}")
+        except (AcquisitionError, ZMQCommunicationError, ConfigurationError) as e:
+            logging.warning(f"A known error occurred during the cycle: {e}")
+            self.error.emit(e.to_dict())
 
-    def wait_for_reply(self, expected_reply: bytes, timeout_message: str) -> bool:
+        except Exception as e:
+            logging.critical("An unexpected error occurred in the measurement worker!", exc_info=True)
+            # Create a generic error payload for the GUI.
+            error_payload = {
+                'type': 'UnhandledWorkerException',
+                'message': f'An unexpected internal error occurred: {e}'
+            }
+            self.error.emit(error_payload)
+
+    def wait_for_reply(self, expected_reply: bytes) -> bool:
         """Uses a poller to wait for a specific reply within a timeout."""
         socks = dict(self.poller.poll(self.timeout_ms))
         if self.socket in socks and socks[self.socket] == zmq.POLLIN:
             reply = self.socket.recv()
             if reply == expected_reply:
-                return True
+                return # Success
             else:
-                self.error.emit(f"Received unexpected reply: {reply.decode()}")
-                return False
+                raise ZMQCommunicationError(f"Received unexpected reply: '{reply.decode()}'")
         else:
-            self.error.emit(timeout_message)
-            # To prevent ZMQ from getting into a bad state, we should reset the socket
-            self.socket.close()
+            # To prevent ZMQ from getting into a bad state, reset the socket on timeout.
+            self.socket.close(linger=0)
             self.socket = self.context.socket(zmq.REQ)
             self.socket.connect(self.dim_endpoint)
-            self.poller.register(self.socket, zmq.POLLIN)
-            return False
+            self.poller.unregister(self.socket) # Unregister old socket
+            self.poller.register(self.socket, zmq.POLLIN) # Register new one
+            raise ZMQTimeoutError(f"Timeout waiting for '{expected_reply.decode()}' from DIM server.")
 
     def close(self):
-        self.socket.close()
+        if not self.socket.closed:
+            self.socket.close(linger=0)
         self.context.term()
+
 
 # ===================================================================
 # The Manager: Orchestrates everything without blocking the GUI
@@ -105,6 +114,7 @@ class ServerManager(QObject):
     a non-blocking, one-shot timer pattern.
     """
     status_update = Signal(str)
+    error_occurred = Signal(dict)
 
     def __init__(self, config, manager: MeasurementManager, parent=None):
         super().__init__(parent)
@@ -130,7 +140,7 @@ class ServerManager(QObject):
         if self._is_running: return
         self._is_running = True
         self.status_update.emit("Starting continuous cycles...")
-        self.worker.perform_cycle()
+        QTimer.singleShot(0, self.worker.perform_cycle)
 
     @Slot()
     def stop_continuous_cycles(self):
@@ -146,14 +156,24 @@ class ServerManager(QObject):
             # without blocking the GUI event loop.
             QTimer.singleShot(0, self.worker.perform_cycle)
 
-    @Slot(str)
-    def handle_error(self, error_message):
-        self.status_update.emit(f"Error: {error_message}")
+    @Slot(dict)
+    def handle_error(self, error_data: dict):
+        # Strip data from error
+        error_message = error_data.get('message', 'An unknown error occurred.')
+        error_type = error_data.get('type', 'UnknownError')
+
+        # Update GUI
+        self.status_update.emit(f"Error ({error_type}): {error_message}")
+        self.error_occurred.emit(error_data)
+
+        # TBI handling of the cycle
         self.stop_continuous_cycles()
 
     def close(self):
-        self.stop_continuous_cycles()
-        self.worker_thread.quit()
-        self.worker_thread.wait(3000)
-        self.worker.close() # Ensure worker's ZMQ resources are freed
+        if self.worker_thread.isRunning():
+            self.stop_continuous_cycles()
+            QTimer.singleShot(0, self.worker.close) # Ask worker to close its resources
+            self.worker_thread.quit()
+            if not self.worker_thread.wait(3000):
+                logging.warning("Worker thread did not shut down cleanly.")
         print("Server manager closed cleanly.")
