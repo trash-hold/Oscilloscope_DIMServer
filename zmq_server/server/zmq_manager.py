@@ -20,11 +20,12 @@ class MeasurementWorker(QObject):
     error = Signal(dict)
     status_update = Signal(str)
 
-    def __init__(self, manager: MeasurementManager, dim_endpoint: str, timeout_ms: int):
+    def __init__(self, manager: MeasurementManager, dim_endpoint: str, zmq_timeout: int):
         super().__init__()
         self.manager = manager
         self.dim_endpoint = dim_endpoint
-        self.timeout_ms = timeout_ms
+        self.zmq_timeout = zmq_timeout    #ZMQ socket timeout
+        self.acquisition_timeout = 10   
         
         # Each worker thread MUST have its own context and socket
         self.context = zmq.Context()
@@ -34,13 +35,18 @@ class MeasurementWorker(QObject):
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)
 
+    @Slot(int)
+    def set_acquisition_timeout(self, timeout: int):
+        """Sets the timeout for the oscilloscope data acquisition."""
+        self.acquisition_timeout = timeout
+
     @Slot()
     def perform_cycle(self):
         """Executes one full, synchronized measurement cycle."""
         try:
             # 1. Acquire data from the oscilloscope
             self.status_update.emit("Acquiring data from oscilloscope...")
-            waveform_data = self.manager.sample(timeout=10)
+            waveform_data = self.manager.sample(timeout=self.acquisition_timeout)
 
             # 2. Stage 1: Send metadata and wait for "READY"
             metadata = {
@@ -83,7 +89,7 @@ class MeasurementWorker(QObject):
 
     def wait_for_reply(self, expected_reply: bytes) -> bool:
         """Uses a poller to wait for a specific reply within a timeout."""
-        socks = dict(self.poller.poll(self.timeout_ms))
+        socks = dict(self.poller.poll(self.zmq_timeout))
         if self.socket in socks and socks[self.socket] == zmq.POLLIN:
             reply = self.socket.recv()
             if reply == expected_reply:
@@ -119,13 +125,14 @@ class ServerManager(QObject):
     def __init__(self, config, manager: MeasurementManager, parent=None):
         super().__init__(parent)
         self._is_running = False
+        self._continue_on_timeout = False
         
         # Worker and Thread Setup
         self.worker_thread = QThread()
         self.worker = MeasurementWorker(
             manager, 
             config['dim_server_endpoint'], 
-            config['ack_timeout_ms']
+            config['ack_zmq_timeout']
         )
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.start()
@@ -135,18 +142,20 @@ class ServerManager(QObject):
         self.worker.error.connect(self.handle_error)
         self.worker.status_update.connect(self.status_update.emit)
 
-    @Slot()
-    def start_continuous_cycles(self):
+    @Slot(int, bool)
+    def start_continuous_cycles(self, acquisition_timeout: int, continue_on_timeout: bool):
         if self._is_running: return
         self._is_running = True
+        self._continue_on_timeout = continue_on_timeout
+
         self.status_update.emit("Starting continuous cycles...")
+        QTimer.singleShot(0, lambda: self.worker.set_acquisition_timeout(acquisition_timeout))
         QTimer.singleShot(0, self.worker.perform_cycle)
 
     @Slot()
     def stop_continuous_cycles(self):
         if not self._is_running: return
         self._is_running = False
-        self.status_update.emit("Stopping... The current cycle will be the last.")
 
     @Slot()
     def on_cycle_finished(self):
@@ -166,8 +175,13 @@ class ServerManager(QObject):
         self.status_update.emit(f"Error ({error_type}): {error_message}")
         self.error_occurred.emit(error_data)
 
-        # TBI handling of the cycle
-        self.stop_continuous_cycles()
+        if error_type == "AcquisitionTimeoutError" and self._continue_on_timeout:
+            # Schedule the next cycle and do nothing else.
+            # The GUI will log the warning, but the process continues.
+            if self._is_running:
+                QTimer.singleShot(0, self.worker.perform_cycle)
+        else:
+            self.stop_continuous_cycles()
 
     def close(self):
         if self.worker_thread.isRunning():

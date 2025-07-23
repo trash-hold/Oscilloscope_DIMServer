@@ -8,7 +8,7 @@ import zmq
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, 
-    QPushButton, QLabel, QTextEdit, QMessageBox
+    QPushButton, QLabel, QTextEdit, QMessageBox, QSpinBox, QCheckBox, QHBoxLayout
 )
 from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
 from PySide6.QtGui import QFont
@@ -23,7 +23,7 @@ class OscilloscopeControlGUI(QMainWindow):
     def __init__(self, config_path, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Oscilloscope Synchronized Server")
-        self.setGeometry(100, 100, 700, 450)
+        self.setGeometry(100, 100, 700, 500)
 
         try:
             with open(config_path, 'r') as f:
@@ -31,6 +31,14 @@ class OscilloscopeControlGUI(QMainWindow):
         except (FileNotFoundError, json.JSONDecodeError) as e:
             QMessageBox.critical(self, "Configuration Error", f"Failed to load or parse config file '{config_path}'.\n{e}")
             sys.exit(1)
+
+        # Timeout configuration
+        self.timeout_label = QLabel("Acquisition Timeout (s):")
+        self.timeout_spinbox = QSpinBox()
+        self.timeout_spinbox.setRange(1, 3600) # 1 second to 1 hour
+        self.timeout_spinbox.setValue(10)      # Default to 10 seconds
+        self.continue_on_timeout_checkbox = QCheckBox("Continue measurement on timeout")
+        self.continue_on_timeout_checkbox.setChecked(False)
 
         # UI Widget Setup
         self.status_label = QLabel("Initializing...")
@@ -41,9 +49,15 @@ class OscilloscopeControlGUI(QMainWindow):
         self.stop_button.setEnabled(False)
 
         # Layout
+        timeout_layout = QHBoxLayout()
+        timeout_layout.addWidget(self.timeout_label)
+        timeout_layout.addWidget(self.timeout_spinbox)
+        
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.log_view)
+        layout.addLayout(timeout_layout) # NEW
+        layout.addWidget(self.continue_on_timeout_checkbox) # NEW
         layout.addWidget(self.start_button)
         layout.addWidget(self.stop_button)
         central_widget = QWidget()
@@ -77,9 +91,12 @@ class OscilloscopeControlGUI(QMainWindow):
 
         self.status_label.setText(f"Error: {error_message}")
 
-        if error_type == "AcquisitionTimeoutError":
+        if error_type == "AcquisitionTimeoutError" and self.continue_on_timeout_checkbox.isChecked():
+            self.log_message(f"WARNING ({error_type}): {error_message}. Continuing to next cycle.", "orange")
+     
+        elif error_type == "AcquisitionTimeoutError":
             QMessageBox.warning(self, "Acquisition Timeout", error_message)
-            self.log_message(f"WARNING ({error_type}): {error_message}", "orange")
+            self.log_message(f"WARNING ({error_type}): {error_message}", "orange") 
         
         elif error_type in ["DeviceConnectionError", "ConfigurationError", "UnexpectedDeviceError"]:
             # These are critical, likely unrecoverable hardware/config errors.
@@ -91,6 +108,8 @@ class OscilloscopeControlGUI(QMainWindow):
         else: # Catches ZMQ errors, UnhandledWorkerException, etc.
             QMessageBox.critical(self, "System Error", f"{error_message}\nThe measurement has been stopped. Check logs for details.")
             self.log_message(f"CRITICAL ({error_type}): {error_message}", "purple")
+
+            self.set_ui_for_running_state(False)
 
 
     def log_message(self, message: str, color: str = "black"):
@@ -109,9 +128,11 @@ class OscilloscopeControlGUI(QMainWindow):
 
     @Slot()
     def on_start_clicked(self):
-        self.server_manager.start_continuous_cycles()
-        self.start_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
+        timeout = self.timeout_spinbox.value()
+        continue_on_timeout = self.continue_on_timeout_checkbox.isChecked()
+        self.server_manager.start_continuous_cycles(timeout, continue_on_timeout)
+        
+        self.set_ui_for_running_state(True) 
 
     @Slot()
     def on_stop_clicked(self):
@@ -121,6 +142,13 @@ class OscilloscopeControlGUI(QMainWindow):
         
         self.server_manager.stop_continuous_cycles()
         self.set_ui_for_running_state(False)
+
+    def set_ui_for_running_state(self, is_running: bool):
+        """Disables/Enables UI controls based on the measurement state."""
+        self.start_button.setEnabled(not is_running)
+        self.stop_button.setEnabled(is_running)
+        self.timeout_spinbox.setEnabled(not is_running)
+        self.continue_on_timeout_checkbox.setEnabled(not is_running)
 
     def closeEvent(self, event):
         self.server_manager.close()
