@@ -17,6 +17,7 @@ class MeasurementWorker(QObject):
     This includes a metadata handshake, data transfer, and waiting for an ACK.
     """
     cycle_complete = Signal()
+    config_applied = Signal()
     error = Signal(dict)
     status_update = Signal(str)
 
@@ -87,6 +88,22 @@ class MeasurementWorker(QObject):
             }
             self.error.emit(error_payload)
 
+    @Slot(dict)
+    def apply_new_config(self, settings: dict):
+        """Applies new measurement parameters via the manager."""
+        try:
+            self.status_update.emit("Applying new measurement settings...")
+            self.manager.apply_settings(settings)
+            self.status_update.emit("Settings successfully applied.")
+            self.config_applied.emit()
+        except Exception as e:
+            # Handle potential errors during configuration
+            logging.error(f"Failed to apply settings: {e}", exc_info=True)
+            self.error.emit({
+                'type': 'ConfigurationError',
+                'message': f'Failed to apply new settings: {e}'
+            })
+
     def wait_for_reply(self, expected_reply: bytes) -> bool:
         """Uses a poller to wait for a specific reply within a timeout."""
         socks = dict(self.poller.poll(self.zmq_timeout))
@@ -121,11 +138,13 @@ class ServerManager(QObject):
     """
     status_update = Signal(str)
     error_occurred = Signal(dict)
+    _config_update_request = Signal(dict)
 
     def __init__(self, config, manager: MeasurementManager, parent=None):
         super().__init__(parent)
         self._is_running = False
         self._continue_on_timeout = False
+        self._pending_settings = None 
         
         # Worker and Thread Setup
         self.worker_thread = QThread()
@@ -141,16 +160,23 @@ class ServerManager(QObject):
         self.worker.cycle_complete.connect(self.on_cycle_finished)
         self.worker.error.connect(self.handle_error)
         self.worker.status_update.connect(self.status_update.emit)
+        self._config_update_request.connect(self.worker.apply_new_config)
+        self.worker.config_applied.connect(self.on_config_applied)
 
     @Slot(int, bool)
     def start_continuous_cycles(self, acquisition_timeout: int, continue_on_timeout: bool):
         if self._is_running: return
         self._is_running = True
         self._continue_on_timeout = continue_on_timeout
-
         self.status_update.emit("Starting continuous cycles...")
         QTimer.singleShot(0, lambda: self.worker.set_acquisition_timeout(acquisition_timeout))
-        QTimer.singleShot(0, self.worker.perform_cycle)
+        
+        if self._pending_settings:
+            self._apply_pending_config()
+            # The on_config_applied slot will kick off the first measurement.
+        else:
+            # Otherwise, start measuring immediately.
+            QTimer.singleShot(0, self.worker.perform_cycle)
 
     @Slot()
     def stop_continuous_cycles(self):
@@ -159,11 +185,43 @@ class ServerManager(QObject):
 
     @Slot()
     def on_cycle_finished(self):
-        """Called when a full cycle is done. Schedules the next one if still running."""
+        """
+        Called when a measurement cycle is done. This is the ideal time
+        to check for and apply pending configuration changes.
+        """
+        if self._pending_settings:
+            # If there are pending settings, apply them instead of starting a new cycle.
+            self._apply_pending_config()
+            # The on_config_applied slot will then be responsible for restarting the loop.
+            return
+
+        # If no pending settings, continue the loop as normal.
         if self._is_running:
-            # Use a zero-delay timer to start the next cycle immediately
-            # without blocking the GUI event loop.
             QTimer.singleShot(0, self.worker.perform_cycle)
+            
+    @Slot()
+    def on_config_applied(self):
+        """
+        Called after settings have been successfully applied. If the system
+        was running, this method restarts the measurement loop.
+        """
+        # If we were in a continuous run, resume it with the new settings.
+        if self._is_running:
+            self.status_update.emit("Resuming continuous measurement...")
+            QTimer.singleShot(0, self.worker.perform_cycle)
+
+    @Slot(dict)
+    def update_measurement_config(self, settings: dict):
+        """
+        Public slot to receive settings from the GUI or other sources.
+        It stores the settings and applies them at a safe time.
+        """
+        self.status_update.emit("Settings update requested. Will apply when ready.")
+        self._pending_settings = settings
+        
+        # If the measurment is not running, the change can be applied immediately
+        if not self._is_running:
+            self._apply_pending_config()
 
     @Slot(dict)
     def handle_error(self, error_data: dict):
@@ -182,6 +240,12 @@ class ServerManager(QObject):
                 QTimer.singleShot(0, self.worker.perform_cycle)
         else:
             self.stop_continuous_cycles()
+
+    def _apply_pending_config(self):
+        """Internal method to trigger the application of pending settings."""
+        if self._pending_settings:
+            self._config_update_request.emit(self._pending_settings)
+            self._pending_settings = None 
 
     def close(self):
         if self.worker_thread.isRunning():

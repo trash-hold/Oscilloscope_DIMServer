@@ -45,7 +45,42 @@ class MeasurementManager():
         except DeviceError as e:
             raise ConfigurationError("Failed to configure the device. Check connection and config values.") from e
     
+    def apply_settings(self, settings: dict):
+        """
+        Applies new measurement settings to the device.
+        Currently a MOCK function that prints intended actions.
+        """
+        print("\n--- [MeasurementManager] Applying New Settings ---")
+        
+        # Use .get() to safely access dictionary keys
+        ch_settings = settings.get('channels', [])
+        h_settings = settings.get('horizontal', {})
+        t_settings = settings.get('trigger', {})
 
+        self._apply_channel_settings(ch_settings)
+        self._apply_horizontal_settings(h_settings)
+        self._apply_trigger_settings(t_settings)
+
+        print("--- [MeasurementManager] Finished Applying Settings ---\n")
+
+    def _apply_channel_settings(self, ch_settings: list):
+        """Mock function to apply channel settings."""
+        print("[MOCK] Applying Channel Settings:")
+        for i, ch in enumerate(ch_settings):
+            if ch.get('enabled'):
+                print(f"  - CH{i+1}: ON | Volts/Div: {ch.get('volts_div')} | Offset: {ch.get('offset'):.3f} V")
+            else:
+                print(f"  - CH{i+1}: OFF")
+    
+    def _apply_horizontal_settings(self, h_settings: dict):
+        """Mock function to apply horizontal settings."""
+        print("[MOCK] Applying Horizontal Settings:")
+        print(f"  - Time/Div: {h_settings.get('time_div')} | Offset: {h_settings.get('offset'):.3f} s")
+
+    def _apply_trigger_settings(self, t_settings: dict):
+        """Mock function to apply trigger settings."""
+        print("[MOCK] Applying Trigger Settings:")
+        print(f"  - Source: {t_settings.get('source')} | Level: {t_settings.get('level'):.3f} V | Slope: {t_settings.get('slope')}")
     
     def sample(self, timeout: int = 60) -> None:
         '''

@@ -1,29 +1,27 @@
+# Overall functionality
 import sys
 import json
 import time
-import threading
-import numpy as np
-import zmq
 
-
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, 
+# GUI
+from PySide6.QtWidgets import ( QMainWindow, QWidget, QVBoxLayout, 
     QPushButton, QLabel, QTextEdit, QMessageBox, QSpinBox, QCheckBox, QHBoxLayout
 )
-from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Slot
 
+# Custom classes
 from drivers.TDS3054C import TDS3054C
 from manager.measurement_manager import MeasurementManager
 from server.zmq_manager import *
 from common.exepction import * 
+from gui.panels import ControlPanel
 
 
 class OscilloscopeControlGUI(QMainWindow):
     def __init__(self, config_path, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Oscilloscope Synchronized Server")
-        self.setGeometry(100, 100, 700, 500)
+        self.setGeometry(100, 100, 1000, 500)
 
         try:
             with open(config_path, 'r') as f:
@@ -48,20 +46,35 @@ class OscilloscopeControlGUI(QMainWindow):
         self.stop_button = QPushButton("Stop")
         self.stop_button.setEnabled(False)
 
+        # Panels
+        self.control_panel = ControlPanel()
+
         # Layout
+        main_layout = QHBoxLayout()
+        
+        # Left side: Control Panel
+        main_layout.addWidget(self.control_panel, 1) # Weight 1
+
+        # Right side: Logging and operation controls
+        right_v_layout = QVBoxLayout()
+        right_v_layout.addWidget(self.status_label)
+        right_v_layout.addWidget(self.log_view, 5) # Give log view more space
+
         timeout_layout = QHBoxLayout()
         timeout_layout.addWidget(self.timeout_label)
         timeout_layout.addWidget(self.timeout_spinbox)
+        right_v_layout.addLayout(timeout_layout)
+        right_v_layout.addWidget(self.continue_on_timeout_checkbox)
         
-        layout = QVBoxLayout()
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.log_view)
-        layout.addLayout(timeout_layout) # NEW
-        layout.addWidget(self.continue_on_timeout_checkbox) # NEW
-        layout.addWidget(self.start_button)
-        layout.addWidget(self.stop_button)
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.start_button)
+        button_layout.addWidget(self.stop_button)
+        right_v_layout.addLayout(button_layout)
+
+        main_layout.addLayout(right_v_layout, 2) # Weight 2, takes more space
+
         central_widget = QWidget()
-        central_widget.setLayout(layout)
+        central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
         # Instantiate the Application Stack
@@ -78,6 +91,9 @@ class OscilloscopeControlGUI(QMainWindow):
         self.server_manager.error_occurred.connect(self.handle_error)
         self.start_button.clicked.connect(self.on_start_clicked)
         self.stop_button.clicked.connect(self.on_stop_clicked)
+
+        self.control_panel.settings_changed.connect(self.on_settings_changed)
+        self.control_panel._on_value_changed()
 
     
     @Slot(dict)
@@ -143,12 +159,19 @@ class OscilloscopeControlGUI(QMainWindow):
         self.server_manager.stop_continuous_cycles()
         self.set_ui_for_running_state(False)
 
+    @Slot(dict)
+    def on_settings_changed(self, settings: dict):
+        """Forwards new measurement settings to the backend."""
+        self.log_message("New settings received. Applying to next measurement.", "green")
+        self.server_manager.update_measurement_config(settings)
+
     def set_ui_for_running_state(self, is_running: bool):
         """Disables/Enables UI controls based on the measurement state."""
         self.start_button.setEnabled(not is_running)
         self.stop_button.setEnabled(is_running)
         self.timeout_spinbox.setEnabled(not is_running)
         self.continue_on_timeout_checkbox.setEnabled(not is_running)
+        self.control_panel.set_enabled_controls(not is_running)
 
     def closeEvent(self, event):
         self.server_manager.close()
