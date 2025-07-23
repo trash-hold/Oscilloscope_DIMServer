@@ -47,40 +47,62 @@ class MeasurementManager():
     
     def apply_settings(self, settings: dict):
         """
-        Applies new measurement settings to the device.
-        Currently a MOCK function that prints intended actions.
+        Applies new measurement settings to the device by calling the
+        high-level abstract methods of the driver.
         """
-        print("\n--- [MeasurementManager] Applying New Settings ---")
+        print("\n--- [MeasurementManager] Applying New Settings to Driver ---")
         
-        # Use .get() to safely access dictionary keys
         ch_settings = settings.get('channels', [])
         h_settings = settings.get('horizontal', {})
         t_settings = settings.get('trigger', {})
 
-        self._apply_channel_settings(ch_settings)
-        self._apply_horizontal_settings(h_settings)
-        self._apply_trigger_settings(t_settings)
+        try:
+            # --- Apply Channel Settings ---
+            for i, ch in enumerate(ch_settings):
+                ch_num = i + 1
+                self.dev.set_channel_state(ch_num, ch.get('enabled', False))
+                if ch.get('enabled'):
+                    scale = self._parse_value_with_unit(ch.get('volts_div', '1'))
+                    self.dev.set_vertical_scale(ch_num, scale)
+                    self.dev.set_vertical_offset(ch_num, ch.get('offset', 0.0))
 
-        print("--- [MeasurementManager] Finished Applying Settings ---\n")
+            # --- Apply Horizontal Settings ---
+            h_scale = self._parse_value_with_unit(h_settings.get('time_div', '1ms'))
+            self.dev.set_horizontal_scale(h_scale)
+            self.dev.set_horizontal_offset(h_settings.get('offset', 0.0))
 
-    def _apply_channel_settings(self, ch_settings: list):
-        """Mock function to apply channel settings."""
-        print("[MOCK] Applying Channel Settings:")
-        for i, ch in enumerate(ch_settings):
-            if ch.get('enabled'):
-                print(f"  - CH{i+1}: ON | Volts/Div: {ch.get('volts_div')} | Offset: {ch.get('offset'):.3f} V")
-            else:
-                print(f"  - CH{i+1}: OFF")
-    
-    def _apply_horizontal_settings(self, h_settings: dict):
-        """Mock function to apply horizontal settings."""
-        print("[MOCK] Applying Horizontal Settings:")
-        print(f"  - Time/Div: {h_settings.get('time_div')} | Offset: {h_settings.get('offset'):.3f} s")
+            # --- Apply Trigger Settings ---
+            self.dev.set_trigger(
+                source=t_settings.get('source', 'CH1'),
+                level=t_settings.get('level', 0.0),
+                slope=t_settings.get('slope', 'Rising')
+            )
+            print("--- [MeasurementManager] Finished Applying Settings ---\n")
 
-    def _apply_trigger_settings(self, t_settings: dict):
-        """Mock function to apply trigger settings."""
-        print("[MOCK] Applying Trigger Settings:")
-        print(f"  - Source: {t_settings.get('source')} | Level: {t_settings.get('level'):.3f} V | Slope: {t_settings.get('slope')}")
+        except (DeviceError, ConfigurationError) as e:
+            # Re-raise as a configuration error to be caught by the worker
+            raise ConfigurationError(f"Failed to apply settings to device: {e}") from e
+        
+    def _parse_value_with_unit(self, value_str: str) -> float:
+        """
+        Parses a string like "500mV" or "10us" into a float in base units (V or s).
+        """
+        value_str = value_str.strip().lower()
+        try:
+            if 'mv' in value_str:
+                return float(value_str.replace('mv', '')) * 1e-3
+            if 'v' in value_str:
+                return float(value_str.replace('v', ''))
+            if 'ms' in value_str:
+                return float(value_str.replace('ms', '')) * 1e-3
+            if 'us' in value_str:
+                return float(value_str.replace('us', '')) * 1e-6
+            if 's' in value_str:
+                return float(value_str.replace('s', ''))
+            # Default case if no unit found
+            return float(value_str)
+        except (ValueError, TypeError):
+            raise ConfigurationError(f"Could not parse value: '{value_str}'")
     
     def sample(self, timeout: int = 60) -> None:
         '''
