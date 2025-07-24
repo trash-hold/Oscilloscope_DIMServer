@@ -81,12 +81,10 @@ class MeasurementWorker(QObject):
 
         except Exception as e:
             logging.critical("An unexpected error occurred in the measurement worker!", exc_info=True)
-            # Create a generic error payload for the GUI.
-            error_payload = {
-                'type': 'UnhandledWorkerException',
-                'message': f'An unexpected internal error occurred: {e}'
-            }
-            self.error.emit(error_payload)
+            error = UnhandledWorkerException(
+                f'An unexpected internal error occurred: {e}'
+            )
+            self.error.emit(error.to_dict())
 
     @Slot(dict)
     def apply_new_config(self, settings: dict):

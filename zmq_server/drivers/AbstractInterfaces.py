@@ -2,6 +2,13 @@ from abc import ABC, abstractmethod
 
 class Oscilloscope(ABC):
 
+    @abstractmethod
+    def __init__(self, connection_params: dict):
+        """
+        Initializes the driver with device-specific connection parameters.
+        """
+        pass
+    
     @abstractmethod 
     def make_connection(self) -> None:
         '''

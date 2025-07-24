@@ -82,12 +82,13 @@ class EthernetSocket():
 
 
 class TDS3054C(Oscilloscope):
-    def __init__(self, ip: str = None, port: int = None):
+    def __init__(self, connection_params: dict):
         '''
         Define IPv4 and Port number for future connections.
         '''
 
-        self.curr_socket = None
+        ip = connection_params.get('ip')
+        port = connection_params.get('port')
         self.socket = EthernetSocket(ip, port)
 
 

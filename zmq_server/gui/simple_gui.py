@@ -10,90 +10,75 @@ from PySide6.QtWidgets import ( QMainWindow, QWidget, QVBoxLayout,
 from PySide6.QtCore import Slot
 
 # Custom classes
-from drivers.TDS3054C import TDS3054C
-from manager.measurement_manager import MeasurementManager
 from server.zmq_manager import *
 from common.exepction import * 
 from gui.panels import ControlPanel
+from server.backend import BackendService
+
 
 
 class OscilloscopeControlGUI(QMainWindow):
     def __init__(self, config_path, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Oscilloscope Synchronized Server")
-        self.setGeometry(100, 100, 1000, 500)
+        self.setWindowTitle("Oscilloscope Control Framework")
+        self.setGeometry(100, 100, 1000, 700)
 
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            QMessageBox.critical(self, "Configuration Error", f"Failed to load or parse config file '{config_path}'.\n{e}")
+            QMessageBox.critical(self, "Configuration Error", f"Failed to load config file '{config_path}'.\n{e}")
             sys.exit(1)
 
-        # Timeout configuration
-        self.timeout_label = QLabel("Acquisition Timeout (s):")
-        self.timeout_spinbox = QSpinBox()
-        self.timeout_spinbox.setRange(1, 3600) # 1 second to 1 hour
-        self.timeout_spinbox.setValue(10)      # Default to 10 seconds
-        self.continue_on_timeout_checkbox = QCheckBox("Continue measurement on timeout")
-        self.continue_on_timeout_checkbox.setChecked(False)
+        try:
+            self.backend = BackendService(config)
+        except Exception as e:
+            QMessageBox.critical(self, "Initialization Error", f"Failed to initialize the backend.\n{e}")
+            sys.exit(1)
 
-        # UI Widget Setup
-        self.status_label = QLabel("Initializing...")
+        # --- UI Widget Setup ---
+        device_name = self.backend.device_config.get('device_name', 'Unknown Device')
+        self.status_label = QLabel(f"Ready. Device: {device_name}")
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.start_button = QPushButton("Start Continuous Measurement")
         self.stop_button = QPushButton("Stop")
         self.stop_button.setEnabled(False)
-
-        # Panels
-        self.control_panel = ControlPanel()
-
-        # Layout
-        main_layout = QHBoxLayout()
         
-        # Left side: Control Panel
-        main_layout.addWidget(self.control_panel, 1) # Weight 1
+        # MODIFIED: Instantiate ControlPanel in one clean line.
+        self.control_panel = ControlPanel(self.backend.device_config)
 
-        # Right side: Logging and operation controls
+        # --- Layout ---
+        main_layout = QHBoxLayout()
+        main_layout.addWidget(self.control_panel, 1)
         right_v_layout = QVBoxLayout()
         right_v_layout.addWidget(self.status_label)
-        right_v_layout.addWidget(self.log_view, 5) # Give log view more space
-
+        right_v_layout.addWidget(self.log_view, 5)
         timeout_layout = QHBoxLayout()
+        self.timeout_label = QLabel("Acquisition Timeout (s):")
+        self.timeout_spinbox = QSpinBox()
+        self.timeout_spinbox.setRange(1, 3600)
+        self.timeout_spinbox.setValue(10)
+        self.continue_on_timeout_checkbox = QCheckBox("Continue measurement on timeout")
         timeout_layout.addWidget(self.timeout_label)
         timeout_layout.addWidget(self.timeout_spinbox)
         right_v_layout.addLayout(timeout_layout)
         right_v_layout.addWidget(self.continue_on_timeout_checkbox)
-        
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
         right_v_layout.addLayout(button_layout)
-
-        main_layout.addLayout(right_v_layout, 2) # Weight 2, takes more space
-
+        main_layout.addLayout(right_v_layout, 2)
         central_widget = QWidget()
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
-        # Instantiate the Application Stack
-        try:
-            driver = TDS3054C(config['scope_ip'], config['scope_port'])
-            manager = MeasurementManager(driver)
-            self.server_manager = ServerManager(config, manager)
-        except Exception as e:
-            QMessageBox.critical(self, "Initialization Error", f"Failed to initialize the application stack.\n{e}")
-            sys.exit(1)
-
-        # Connect Signals to GUI Slots
-        self.server_manager.status_update.connect(self.update_status)
-        self.server_manager.error_occurred.connect(self.handle_error)
+        # --- Connect Signals to Slots ---
+        self.backend.status_update.connect(self.update_status)
+        self.backend.error_occurred.connect(self.handle_error)
         self.start_button.clicked.connect(self.on_start_clicked)
         self.stop_button.clicked.connect(self.on_stop_clicked)
-
         self.control_panel.settings_changed.connect(self.on_settings_changed)
-        self.control_panel._on_value_changed()
 
     
     @Slot(dict)
@@ -146,7 +131,7 @@ class OscilloscopeControlGUI(QMainWindow):
     def on_start_clicked(self):
         timeout = self.timeout_spinbox.value()
         continue_on_timeout = self.continue_on_timeout_checkbox.isChecked()
-        self.server_manager.start_continuous_cycles(timeout, continue_on_timeout)
+        self.backend.start_continuous_cycles(timeout, continue_on_timeout)
         
         self.set_ui_for_running_state(True) 
 
@@ -156,14 +141,15 @@ class OscilloscopeControlGUI(QMainWindow):
         self.status_label.setText(f"Status: {stop_message}")
         self.log_message(stop_message, "black") # Use default color
         
-        self.server_manager.stop_continuous_cycles()
+        self.backend.stop_continuous_cycles()
         self.set_ui_for_running_state(False)
 
     @Slot(dict)
     def on_settings_changed(self, settings: dict):
         """Forwards new measurement settings to the backend."""
         self.log_message("New settings received. Applying to next measurement.", "green")
-        self.server_manager.update_measurement_config(settings)
+        self.backend.update_measurement_config(settings)
+        
 
     def set_ui_for_running_state(self, is_running: bool):
         """Disables/Enables UI controls based on the measurement state."""
@@ -174,5 +160,5 @@ class OscilloscopeControlGUI(QMainWindow):
         self.control_panel.set_enabled_controls(not is_running)
 
     def closeEvent(self, event):
-        self.server_manager.close()
+        self.backend.close()
         event.accept()
