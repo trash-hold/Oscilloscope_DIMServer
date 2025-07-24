@@ -49,18 +49,24 @@ find_package(Threads REQUIRED)
 FetchContent_Declare(
   cppzmq
   GIT_REPOSITORY https://github.com/zeromq/cppzmq.git
-  GIT_TAG        v4.10.0 # Use a specific, stable version
+  GIT_TAG        v4.10.0 
 )
 
 # Declare the libzmq dependency. cppzmq needs libzmq.
 FetchContent_Declare(
   libzmq
   GIT_REPOSITORY https://github.com/zeromq/libzmq.git
-  GIT_TAG        v4.3.5 # Use a specific, stable version
+  GIT_TAG        v4.3.5 
+)
+
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG        v3.11.3 
 )
 
 # Download and prepare the dependencies
-FetchContent_MakeAvailable(cppzmq libzmq)
+FetchContent_MakeAvailable(cppzmq libzmq nlohmann_json)
 
 # Executable
 # ==========================================================
@@ -73,4 +79,5 @@ target_link_libraries(my_dim_server PRIVATE
  ${DIM_LIBRARY}
  cppzmq
  Threads::Threads
+ nlohmann_json::nlohmann_json
  )

@@ -1,197 +1,187 @@
 #include <iostream>
-#include <dis.hxx>
-#ifndef WIN32
-#include <unistd.h>
-#endif
-using namespace std;
 #include <string>
 #include <vector>
-#include <zmq.hpp>  // For interfacing python app
-#include <msgpack.hpp>  // For decoding msg from zmq socket
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <chrono>
 
-class ErrorHandler : public DimErrorHandler
-{
-	void errorHandler(int severity, int code, char *msg)
-	{
-		int index = 0;
-		char **services;
-		cout << severity << " " << msg << endl;
-		services = DimServer::getClientServices();
-		cout<< "from "<< DimServer::getClientName() << " services:" << endl;
-		while(services[index])
-		{
-			cout << services[index] << endl;
-			index++;
-		}
-	}
+#include <dis.hxx>
+#include <zmq.hpp>
+#include <zmq_addon.hpp>
+#include <nlohmann/json.hpp>
+
+// for convenience
+using json = nlohmann::json;
+
+// Forward declaration
+class ZmqCommunicator;
+
+// ===================================================================
+// Service to hold the reply from the oscilloscope
+// ===================================================================
+class ReplyService {
+    std::string buffer;
+    DimService reply_service;
+    std::mutex mtx;
+
 public:
-	ErrorHandler() {DimServer::addErrorHandler(this);}
-};
+    ReplyService() :
+        buffer("N/A"),
+        reply_service("SCOPE/REPLY", (char*)buffer.c_str())
+    {
+        buffer.reserve(2048);
+    }
 
-class ExitHandler : public DimExitHandler
-{
-	void exitHandler(int code)
-	{
-		cout << "exit code " << code << endl;
-	}
-public:
-	ExitHandler() {DimServer::addExitHandler(this);}
-};
-
-class CmndServ : public DimCommand, public DimTimer
-{
-	DimService servstr;
-	void commandHandler()
-	{
-		int index = 0;
-		char **services;
-		cout << "Command " << getString() << " received" << endl;
-		servstr.updateService(getString()); 
-		services = DimServer::getClientServices();
-		cout<< "from "<< DimServer::getClientName() << " services:" << endl;
-		while(services[index])
-		{
-			cout << services[index] << endl;
-			index++;
-		}
-	}
-public :
-	CmndServ() : DimCommand("TEST/CMND","C"), 
-				 servstr("TEST/STRVAL","empty") {};
-};
-
-void add_serv(const int & ival)
-{
-	DimService *abc;
-
-	abc = new DimService("TEST/INTVAL_CONST",(int &)ival);
-}
-
-void add_serv_str(const string & s1)
-{
-	DimService *abc;
-
-	abc = new DimService("TEST/STRINGVAL_CONST",(char *)s1.c_str());
-}
-
-void add_serv_bool(const bool & boolval)
-{
-	DimService *serv;
-
-//	serv = new DimService("TEST/BOOLVAL_CONST",(short &)boolval);
-	serv = new DimService("TEST/BOOLVAL_CONST","C:1", (void *)&boolval, 1);
-}
-
-class ServWithHandler : public DimService
-{
-	int value;
-
-	void serviceHandler()
-	{
-		value++;
-//		setData(value);
-	}
-public :
-	ServWithHandler(char *name) : DimService(name, value) { value = 0;};
-};
-
-void runZMQ(DimService *dim_service, std::string *buffer)
-{
-    // 1. Prepare context and socket
-    zmq::context_t context(1);
-    zmq::socket_t socket(context, zmq::socket_type::rep);
-    socket.bind("tcp://*:5555");
-
-     
-    std::stringstream float_converter;
-    while (true) {
-        // --- Stage 1: Wait for metadata ---
-        zmq::message_t metadata_msg;
-        socket.recv(metadata_msg, zmq::recv_flags::none);
-        std::cout << "Received metadata. Preparing for data..." << std::endl;
-        
-        // Send "READY" confirmation
-        socket.send(zmq::buffer("READY", 5), zmq::send_flags::none);
-
-        // --- Stage 2: Wait for waveform data ---
-        zmq::message_t waveform_msg;
-        socket.recv(waveform_msg, zmq::recv_flags::none);
-        std::cout << "Received waveform data. Processing..." << std::endl;
-        
-        msgpack::object_handle oh = msgpack::unpack(static_cast<const char*>(waveform_msg.data()), waveform_msg.size());
-        std::vector<float> received_floats;
-        oh.get().convert(received_floats);
-        
-        char* write_ptr = buffer->data();
-        const char* buffer_end = write_ptr + buffer->capacity();
-        size_t total_bytes_written = 0;
-
-        // 2. Loop through floats and write directly into the buffer.
-        for (size_t i = 0; i < received_floats.size(); ++i) {
-            // Clear the converter for the next float
-            float_converter.str("");
-            float_converter.clear();
-            
-            // Convert one float to a string
-            float_converter << received_floats[i];
-            std::string float_str = float_converter.str();
-
-            // Add a semicolon for all but the last element
-            if (i < received_floats.size() - 1) {
-                float_str += ';';
-            }
-
-            // 3. Check for buffer overflow before writing.
-            if (write_ptr + float_str.length() >= buffer_end) {
-                std::cerr << "Error: Buffer capacity reached. Truncating data." << std::endl;
-                break; // Exit the loop
-            }
-
-            // 4. Copy the small string into the main buffer and advance the pointer.
-            memcpy(write_ptr, float_str.c_str(), float_str.length());
-            write_ptr += float_str.length();
-            total_bytes_written += float_str.length();
+    void update(const std::string& new_reply) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (new_reply.length() + 1 > buffer.capacity()) {
+            buffer.reserve(new_reply.length() + 1);
         }
-
-        // 5. Add the final null terminator at the end of the data.
-        *write_ptr = '\0';
-
-        // 6. IMPORTANT: Update the size of the original string object.
-        buffer->resize(total_bytes_written);
-
-        // 7. UPDATE THE DIM SERVICE
-        dim_service->updateService();
-
-        // --- CORRECT REPLY FOR STAGE 2 ---
-        // Send final "ACK" to acknowledge the data
-        socket.send(zmq::buffer("ACK", 3), zmq::send_flags::none); 
-        
-        std::cout << "Cycle complete. Waiting for next metadata." << std::endl;
+        buffer = new_reply;
+        reply_service.updateService();
+        std::cout << "Updated SCOPE/REPLY with: " << buffer << std::endl;
     }
+};
+
+
+// ===================================================================
+// Command service to receive commands from DIM clients
+// ===================================================================
+class CommandService : public DimCommand {
+    ZmqCommunicator& zmq_comm;
+    long command_counter;
+
+public:
+    CommandService(ZmqCommunicator& comm) :
+        DimCommand("SCOPE/COMMAND", "C"),
+        zmq_comm(comm),
+        command_counter(0) {}
+
+    void commandHandler() override;
+};
+
+
+// ===================================================================
+// Handles asynchronous ZMQ communication in a separate thread
+// ===================================================================
+class ZmqCommunicator {
+    zmq::context_t context;
+    zmq::socket_t socket;
+    std::atomic<bool> running;
+    std::thread comm_thread;
+    ReplyService& reply_svc;
+    zmq::message_t python_client_id;
+
+public:
+    ZmqCommunicator(ReplyService& service) :
+        context(1),
+        socket(context, zmq::socket_type::router),
+        running(false),
+        reply_svc(service) {}
+
+    ~ZmqCommunicator() {
+        stop();
+    }
+
+    void start(const std::string& endpoint) {
+        socket.bind(endpoint);
+        running = true;
+        comm_thread = std::thread(&ZmqCommunicator::receive_loop, this);
+        std::cout << "ZMQ ROUTER listening on " << endpoint << std::endl;
+    }
+
+    void stop() {
+        if (running) {
+            running = false;
+            if (comm_thread.joinable()) {
+                comm_thread.join();
+            }
+        }
+    }
+
+    void send_command(const std::string& cmd_text, const std::string& cmd_id);
+
+private:
+    void receive_loop() {
+        while (running) {
+            zmq::multipart_t multipart_msg;
+
+            // --- FIX 1: Use bool for the result and static_cast the flag to int ---
+            bool result = multipart_msg.recv(socket, static_cast<int>(zmq::recv_flags::dontwait));
+
+            if (!result) { // Check if the bool is false (no message received)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+
+            // --- FIX 2: Create a NEW message by copying the DATA from the identity frame ---
+            // This respects the move-only nature of zmq::message_t.
+            python_client_id = zmq::message_t(multipart_msg.front().data(), multipart_msg.front().size());
+
+            std::string received_str = multipart_msg.at(2).to_string();
+            std::cout << "Received message from Python: " << received_str << std::endl;
+
+            try {
+                json j = json::parse(received_str);
+                if (j.contains("type") && j["type"] == "reply") {
+                    reply_svc.update(j["payload"].get<std::string>());
+                }
+            } catch (const json::parse_error& e) {
+                std::cerr << "JSON parse error: " << e.what() << std::endl;
+                reply_svc.update("Error: Received malformed JSON from Python.");
+            }
+        }
+    }
+};
+
+// Implementation of CommandService::commandHandler
+void CommandService::commandHandler() {
+    std::string cmd = getString();
+    std::cout << "Received DIM command: " << cmd << std::endl;
+    std::string cmd_id = "cmd_" + std::to_string(command_counter++);
+    zmq_comm.send_command(cmd, cmd_id);
 }
 
-int main()
-{
-    // Setting up DIM server
-    std::string data_str;
-    data_str.reserve(10000 * 16);
-
-    DimService waveform_service("SCOPE/WAVEFORM", const_cast<char*>(data_str.c_str()));
-
-    DimServer::start("OscilloscopeData");
-
-    try {
-        runZMQ(&waveform_service, &data_str);
-    } catch (const zmq::error_t& e) {
-        // Catch and report any ZeroMQ-specific errors
-        std::cerr << "ZeroMQ error: " << e.what() << " (Error code: " << e.num() << ")" << std::endl;
-        return 1;
-    } catch (const std::exception& e) {
-        // Catch any other standard exceptions
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
+// Must define this after the full class definition of ZmqCommunicator
+void ZmqCommunicator::send_command(const std::string& cmd_text, const std::string& cmd_id) {
+    if (!python_client_id.size()) {
+        std::cerr << "Error: Python client has not connected yet. Cannot send command." << std::endl;
+        reply_svc.update("Error: Python client not connected.");
+        return;
     }
+
+    json j;
+    j["type"] = "command";
+    j["id"] = cmd_id;
+    j["payload"] = cmd_text;
+
+    std::string msg_str = j.dump();
+    std::cout << "Sending command to Python: " << msg_str << std::endl;
+
+    socket.send(python_client_id, zmq::send_flags::sndmore);
+    socket.send(zmq::buffer(""), zmq::send_flags::sndmore);
+    socket.send(zmq::buffer(msg_str), zmq::send_flags::none);
+}
+
+// ===================================================================
+// Main Application Entry Point
+// ===================================================================
+int main() {
+    ReplyService reply_service;
+    ZmqCommunicator zmq_comm(reply_service);
+    CommandService command_service(zmq_comm);
+
+    zmq_comm.start("tcp://*:5555");
+    DimServer::start("OscilloscopeServer");
+
+    std::cout << "DIM Server 'OscilloscopeServer' started." << std::endl;
+    std::cout << "Providing services SCOPE/COMMAND and SCOPE/REPLY." << std::endl;
+
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+
+    zmq_comm.stop();
     return 0;
-	
 }
-
