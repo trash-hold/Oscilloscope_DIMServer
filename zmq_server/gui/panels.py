@@ -38,7 +38,7 @@ class ControlPanel(QWidget):
             # Connect signals
             ch_enable.stateChanged.connect(self._on_value_changed)
             ch_volts_div.currentIndexChanged.connect(self._on_value_changed)
-            ch_offset.valueChanged.connect(self._on_value_changed)
+            ch_offset.editingFinished.connect(self._on_value_changed)
 
         ch_groupbox.setLayout(ch_layout)
         main_layout.addWidget(ch_groupbox)
@@ -56,7 +56,7 @@ class ControlPanel(QWidget):
         h_groupbox.setLayout(h_layout)
         main_layout.addWidget(h_groupbox)
         self.h_time_div.currentIndexChanged.connect(self._update_horizontal_controls)
-        self.h_offset.valueChanged.connect(self._on_value_changed)
+        self.h_offset.editingFinished.connect(self._on_value_changed)
 
         # --- Trigger Settings ---
         t_groupbox = QGroupBox("Trigger Settings")
@@ -74,7 +74,7 @@ class ControlPanel(QWidget):
         t_groupbox.setLayout(t_layout)
         main_layout.addWidget(t_groupbox)
         self.t_source.currentIndexChanged.connect(self._on_value_changed)
-        self.t_level.valueChanged.connect(self._on_value_changed)
+        self.t_level.editingFinished.connect(self._on_value_changed)
         self.t_slope.currentIndexChanged.connect(self._on_value_changed)
 
         main_layout.addStretch()
