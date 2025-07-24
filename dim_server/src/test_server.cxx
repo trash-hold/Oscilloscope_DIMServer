@@ -107,25 +107,34 @@ private:
         while (running) {
             zmq::multipart_t multipart_msg;
 
-            // --- FIX 1: Use bool for the result and static_cast the flag to int ---
             bool result = multipart_msg.recv(socket, static_cast<int>(zmq::recv_flags::dontwait));
 
-            if (!result) { // Check if the bool is false (no message received)
+            if (!result) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
 
-            // --- FIX 2: Create a NEW message by copying the DATA from the identity frame ---
-            // This respects the move-only nature of zmq::message_t.
+            if (multipart_msg.size() < 2) {
+                std::cerr << "Warning: Received malformed message with " << multipart_msg.size() << " parts. Ignoring." << std::endl;
+                continue;
+            }
+
+            // --- THIS IS THE CORRECT, COMPILABLE LINE ---
+            // It creates a new message by copying the raw data from the first frame.
             python_client_id = zmq::message_t(multipart_msg.front().data(), multipart_msg.front().size());
 
-            std::string received_str = multipart_msg.at(2).to_string();
+            // The payload is always the LAST part.
+            std::string received_str = multipart_msg.back().to_string();
+
             std::cout << "Received message from Python: " << received_str << std::endl;
 
             try {
                 json j = json::parse(received_str);
                 if (j.contains("type") && j["type"] == "reply") {
                     reply_svc.update(j["payload"].get<std::string>());
+                }
+                else if (j.contains("type") && j["type"] == "status") {
+                    std::cout << "Status update from Python worker: " << j["payload"].get<std::string>() << std::endl;
                 }
             } catch (const json::parse_error& e) {
                 std::cerr << "JSON parse error: " << e.what() << std::endl;
@@ -159,6 +168,8 @@ void ZmqCommunicator::send_command(const std::string& cmd_text, const std::strin
     std::string msg_str = j.dump();
     std::cout << "Sending command to Python: " << msg_str << std::endl;
 
+    // Send a 3-part message: [identity, empty_delimiter, content]
+    // This is the most robust way to ensure compatibility.
     socket.send(python_client_id, zmq::send_flags::sndmore);
     socket.send(zmq::buffer(""), zmq::send_flags::sndmore);
     socket.send(zmq::buffer(msg_str), zmq::send_flags::none);

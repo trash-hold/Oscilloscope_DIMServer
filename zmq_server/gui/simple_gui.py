@@ -38,6 +38,10 @@ class OscilloscopeControlGUI(QMainWindow):
             QMessageBox.critical(self, "Initialization Error", f"Failed to initialize the backend.\n{e}")
             sys.exit(1)
 
+#        self.create_layout()
+
+    
+    def create_layout(self) -> None:
         # Custom panels
         self.control_panel = ControlPanel(self.backend.device_config)
         self.action_panel = ActionPanel()

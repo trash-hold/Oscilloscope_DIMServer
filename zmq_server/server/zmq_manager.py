@@ -1,3 +1,4 @@
+import json
 import zmq
 import time
 import logging      # For Error handling
@@ -7,6 +8,109 @@ import msgpack_numpy as mpack_np
 from common.exepction import *
 
 from manager.measurement_manager import MeasurementManager 
+
+class CommandWorker(QObject):
+    """
+    Runs in a dedicated thread, listening for commands from the C++
+    DIM server via a ZMQ DEALER socket. It executes commands and
+    sends replies back.
+    """
+    status_update = Signal(str)
+    error = Signal(dict)
+
+    def __init__(self, manager: MeasurementManager, dim_endpoint: str):
+        super().__init__()
+        self.manager = manager
+        self.dim_endpoint = dim_endpoint
+        self._is_running = False
+
+        # Each worker thread MUST have its own context and socket
+        self.context = zmq.Context()
+        # <--- CHANGE: Use DEALER socket for asynchronous, bidirectional communication --->
+        self.socket = self.context.socket(zmq.DEALER)
+        self.poller = zmq.Poller()
+
+    @Slot()
+    def run(self):
+        """
+        The main loop for the worker thread. Connects the socket and
+        continuously polls for incoming messages.
+        """
+        self.status_update.emit("Worker thread started. Connecting to C++ server...")
+        self.socket.connect(self.dim_endpoint)
+        self.poller.register(self.socket, zmq.POLLIN)
+        self._is_running = True
+        
+        # Send an initial "hello" so the ROUTER knows our identity
+        self.socket.send_json({"type": "status", "payload": "Python worker connected"})
+
+        while self._is_running:
+            # Poll for messages with a timeout (e.g., 100ms)
+            socks = dict(self.poller.poll(100))
+            if self.socket in socks and socks[self.socket] == zmq.POLLIN:
+                # A DEALER socket receives a multi-part message from a ROUTER
+                # The first part is an empty delimiter, the second is the content
+                _, msg_bytes = self.socket.recv_multipart()
+                self.handle_message(msg_bytes)
+
+        # Clean shutdown
+        self.socket.close()
+        self.context.term()
+        self.status_update.emit("Worker thread stopped.")
+
+    def handle_message(self, msg_bytes: bytes):
+        """Parses an incoming message and routes it to the correct handler."""
+        try:
+            message = json.loads(msg_bytes.decode('utf-8'))
+            msg_type = message.get("type")
+
+            if msg_type == "command":
+                self.handle_device_command(message)
+            else:
+                logging.warning(f"Received unknown message type: {msg_type}")
+                self.status_update.emit(f"Warning: Received unknown message type '{msg_type}'")
+
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logging.error(f"Failed to parse incoming message: {e}")
+            self.error.emit(ProtocolError(f"Malformed message received: {e}").to_dict())
+
+    def handle_device_command(self, message: dict):
+        """Executes a raw command on the device and sends a reply."""
+        cmd_id = message.get("id", "unknown")
+        command = message.get("payload")
+
+        if not command:
+            self.send_reply(cmd_id, "Error: Command payload was empty.", is_error=True)
+            return
+
+        self.status_update.emit(f"Executing command: {command}")
+        try:
+            # Use our new generic method in the manager
+            result = self.manager.execute_raw_command(command)
+            self.send_reply(cmd_id, result)
+
+        except DeviceError as e:
+            self.status_update.emit(f"Error executing '{command}': {e}")
+            self.send_reply(cmd_id, str(e), is_error=True)
+        except Exception as e:
+            logging.critical(f"Unhandled exception during command execution: {e}", exc_info=True)
+            self.send_reply(cmd_id, f"An unexpected internal error occurred: {e}", is_error=True)
+
+    def send_reply(self, cmd_id: str, payload: str, is_error: bool = False):
+        """Constructs and sends a JSON reply to the C++ server."""
+        reply = {
+            "type": "reply",
+            "id": cmd_id,
+            "payload": payload,
+            "error": is_error
+        }
+        self.socket.send_json(reply)
+
+    @Slot()
+    def stop(self):
+        """Signals the main loop to terminate."""
+        self._is_running = False
+
 
 # ===================================================================
 # The Worker: Performs the blocking measurement task
@@ -126,6 +230,49 @@ class MeasurementWorker(QObject):
         self.context.term()
 
 
+# ===================================================================
+# The Manager: Orchestrates everything without blocking the GUI
+# ===================================================================
+class ServerManager(QObject):
+    """
+    Manages the CommandWorker thread.
+    """
+    status_update = Signal(str)
+    error_occurred = Signal(dict)
+
+    def __init__(self, config, manager: MeasurementManager, parent=None):
+        super().__init__(parent)
+        
+        # Worker and Thread Setup
+        self.worker_thread = QThread()
+        self.worker = CommandWorker(
+            manager,
+            config['dim_server_endpoint']
+        )
+        self.worker.moveToThread(self.worker_thread)
+
+        # Connect signals and slots
+        self.worker.status_update.connect(self.status_update)
+        self.worker.error.connect(self.error_occurred)
+        
+        # When the thread starts, call the worker's run method
+        self.worker_thread.started.connect(self.worker.run)
+        
+        # Start the thread
+        self.worker_thread.start()
+
+    def close(self):
+        """Shuts down the worker thread cleanly."""
+        if self.worker_thread.isRunning():
+            # Tell the worker's loop to stop
+            self.worker.stop()
+            # Wait for the thread to finish gracefully
+            if not self.worker_thread.wait(3000):
+                logging.warning("Worker thread did not shut down cleanly.")
+                self.worker_thread.terminate() # Force terminate if it's stuck
+        print("Server manager closed cleanly.")
+
+'''
 # ===================================================================
 # The Manager: Orchestrates everything without blocking the GUI
 # ===================================================================
@@ -253,3 +400,4 @@ class ServerManager(QObject):
             if not self.worker_thread.wait(3000):
                 logging.warning("Worker thread did not shut down cleanly.")
         print("Server manager closed cleanly.")
+'''

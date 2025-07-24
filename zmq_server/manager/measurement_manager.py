@@ -1,8 +1,9 @@
 
-from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
 import json     # For reading config files
 import time     # For implementing timeouts
+import logging
 from common.exepction import *
+from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
 
 class MeasurementManager():
     def __init__(self, dev:Oscilloscope, json_file:str = None):
@@ -45,6 +46,24 @@ class MeasurementManager():
         except DeviceError as e:
             raise ConfigurationError("Failed to configure the device. Check connection and config values.") from e
     
+    def execute_raw_command(self, command: str):
+        """
+        Executes a raw SCPI command on the device.
+        Determines whether to use query() or write() based on the command.
+        """
+        command = command.strip()
+        try:
+            if command.endswith('?'):
+                response = self.dev.query(command)
+                return response.strip()
+            else:
+                self.dev.write(command)
+                return "OK" # Return a simple confirmation for write commands
+        except DeviceError as e:
+            # Propagate device errors in a structured way
+            logging.error(f"Device command '{command}' failed: {e}")
+            raise e
+        
     def apply_settings(self, settings: dict):
         """
         Applies new measurement settings to the device by calling the
