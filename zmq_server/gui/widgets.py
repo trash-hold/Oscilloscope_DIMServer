@@ -2,11 +2,15 @@ from PySide6.QtWidgets import (
     QWidget, QCheckBox, QFormLayout, QComboBox, QDoubleSpinBox 
 )
 
+from PySide6.QtCore import Signal, Slot
+
 class ChannelControls(QWidget):
+    settings_changed = Signal()
     def __init__(self, channel_num: int, v_scales: list, parent=None):
         super().__init__(parent)
         self.channel_num = channel_num
         
+        # Layout
         layout = QFormLayout()
         self.setLayout(layout)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -22,6 +26,11 @@ class ChannelControls(QWidget):
         layout.addRow(f"Channel {self.channel_num}:", self.enable)
         layout.addRow("  Volts/Div:", self.volts_div)
         layout.addRow("  Position:", self.offset)
+
+        # Connecting signals
+        self.enable.stateChanged.connect(self._emit_change_signal)
+        self.volts_div.currentIndexChanged.connect(self._emit_change_signal)
+        self.offset.editingFinished.connect(self._emit_change_signal)
 
     def _parse_value_with_unit(self, value_str: str) -> float:
         """
@@ -58,10 +67,19 @@ class ChannelControls(QWidget):
             'volts_div': volts_per_div,
             'position': offset_in_volts
         }
+    
+    @Slot()
+    def _emit_change_signal(self):
+        """Private slot to emit the public signal."""
+        self.settings_changed.emit()
 
 class HorizontalControls(QWidget):
+    settings_changed = Signal()
+
     def __init__(self, h_scales: list, parent=None):
         super().__init__(parent)
+
+        # Layout
         layout = QFormLayout()
         self.setLayout(layout)
 
@@ -74,6 +92,10 @@ class HorizontalControls(QWidget):
         
         layout.addRow("Time/Div:", self.time_div)
         layout.addRow("Offset:", self.offset)
+
+        # Connect signals
+        self.time_div.currentIndexChanged.connect(self._emit_change_signal)
+        self.offset.editingFinished.connect(self._emit_change_signal)
 
     def _parse_value_with_unit(self, value_str: str) -> float:
         value_str = value_str.strip().lower()
@@ -99,9 +121,18 @@ class HorizontalControls(QWidget):
             self.offset.setRange(-scale_val * 5, scale_val * 5)
             self.offset.setSingleStep(scale_val / 10.0)
 
+
+    @Slot()
+    def _emit_change_signal(self):
+        self.settings_changed.emit()
+
 class TriggerControls(QWidget):
+    settings_changed = Signal()
+
     def __init__(self, sources: list, slopes: list, parent=None):
         super().__init__(parent)
+
+        # Layout
         layout = QFormLayout()
         self.setLayout(layout)
 
@@ -117,5 +148,17 @@ class TriggerControls(QWidget):
         layout.addRow("Level:", self.level)
         layout.addRow("Slope:", self.slope)
 
+        # Connecting signals
+        self.source.currentIndexChanged.connect(self._emit_change_signal)
+        self.slope.currentIndexChanged.connect(self._emit_change_signal)
+        self.level.editingFinished.connect(self._emit_change_signal)
+
     def get_settings(self) -> dict:
         return {'source': self.source.currentText(), 'level': self.level.value(), 'slope': self.slope.currentText()}
+    
+
+    @Slot()
+    def _emit_change_signal(self):
+        self.settings_changed.emit()
+    
+    
