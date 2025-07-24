@@ -45,7 +45,43 @@ class MeasurementManager():
         except DeviceError as e:
             raise ConfigurationError("Failed to configure the device. Check connection and config values.") from e
     
+    def apply_settings(self, settings: dict):
+        """
+        Applies new measurement settings to the device by calling the
+        high-level abstract methods of the driver.
+        """
+        print("\n--- [MeasurementManager] Applying New Settings to Driver ---")
+        
+        ch_settings = settings.get('channels', [])
+        h_settings = settings.get('horizontal', {})
+        t_settings = settings.get('trigger', {})
 
+        try:
+            # --- Apply Channel Settings ---
+            for i, ch in enumerate(ch_settings):
+                ch_num = i + 1
+                self.dev.set_channel_state(ch_num, ch.get('enabled', False))
+                if ch.get('enabled'):
+                    print(ch.get('volts_div', 1.0))
+                    self.dev.set_vertical_scale(ch_num, ch.get('volts_div', 1.0))
+                    self.dev.set_vertical_position(ch_num, ch.get('position', 0.0))
+
+            # --- Apply Horizontal Settings ---
+            self.dev.set_horizontal_scale(h_settings.get('time_div', 0.001))
+            self.dev.set_horizontal_position(h_settings.get('position', 0.0))
+
+            # --- Apply Trigger Settings ---
+            self.dev.set_trigger(
+                source=t_settings.get('source', 'CH1'),
+                level=t_settings.get('level', 0.0),
+                slope=t_settings.get('slope', 'Rising')
+            )
+            print("--- [MeasurementManager] Finished Applying Settings ---\n")
+
+        except (DeviceError, ConfigurationError) as e:
+            # Re-raise as a configuration error to be caught by the worker
+            raise ConfigurationError(f"Failed to apply settings to device: {e}") from e
+        
     
     def sample(self, timeout: int = 60) -> None:
         '''

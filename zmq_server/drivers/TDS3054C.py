@@ -82,12 +82,13 @@ class EthernetSocket():
 
 
 class TDS3054C(Oscilloscope):
-    def __init__(self, ip: str = None, port: int = None):
+    def __init__(self, connection_params: dict):
         '''
         Define IPv4 and Port number for future connections.
         '''
 
-        self.curr_socket = None
+        ip = connection_params.get('ip')
+        port = connection_params.get('port')
         self.socket = EthernetSocket(ip, port)
 
 
@@ -97,11 +98,13 @@ class TDS3054C(Oscilloscope):
         '''
         self.socket.connect()
 
+
     def end_connection(self) -> None:
         '''
         WARNING! Connection is automatically closed in the methods inside this class
         '''
         self.socket.close()
+
 
     def test_connection(self) -> bool:
         '''
@@ -121,6 +124,7 @@ class TDS3054C(Oscilloscope):
         except DeviceError as e:
             raise DeviceCommandError("Failed during test connection.") from e
 
+
     def set_channel(self, channel: int) -> None:
         '''
         Validate channel number and set the oscilloscope. Available values are: 1, 2, 3, 4
@@ -139,6 +143,7 @@ class TDS3054C(Oscilloscope):
         except DeviceCommunicationError as e:
             raise DeviceCommandError(f"Failed to set channel to {channel}.") from e
     
+
     def query(self, cmd: str, channel: int = None) -> str:
         '''
         Send data and await response
@@ -159,6 +164,7 @@ class TDS3054C(Oscilloscope):
         except (DeviceCommunicationError, InvalidParameterError, ParsingError) as e:
             raise DeviceCommandError(f"Query command '{cmd}' failed.") from e
     
+
     def write(self, cmd: str, channel: int = None) -> None:
         '''
         Equivalent to set operation, returns nothing 
@@ -173,9 +179,71 @@ class TDS3054C(Oscilloscope):
 
         except (DeviceCommunicationError, InvalidParameterError) as e:
             raise DeviceCommandError(f"Write command '{cmd}' failed.") from e
+        
+    
+    def set_channel_state(self, channel: int, enabled: bool) -> None:
+        try:
+            state = "ON" if enabled else "OFF"
+            command = f"SELECT:CH{channel} {state}"
+            self.write(command)
+            print(f"[TDS3054C] Executed: {command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError(f"Failed to set state for channel {channel}.") from e
 
-    def configure(self, json_file) -> None:
-        print("TBI")
+
+    def set_vertical_scale(self, channel: int, scale: float) -> None:
+        try:
+            command = f"CH{channel}:SCAle {scale:.4E}"
+            self.write(command)
+            print(f"[TDS3054C] Executed: {command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError(f"Failed to set vertical scale for channel {channel}.") from e
+        
+
+    def set_vertical_position(self, channel: int, offset: float) -> None:
+        try:
+            command = f"CH{channel}:POSition {offset:g}"
+            self.write(command)
+            print(f"[TDS3054C] Executed: {command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError(f"Failed to set vertical offset for channel {channel}.") from e
+
+
+    def set_horizontal_scale(self, scale: float) -> None:
+        try:
+            command = f"HORizontal:MAIn:SCAle {scale:g}"
+            self.write(command)
+            print(f"[TDS3054C] Executed: {command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to set horizontal scale.") from e
+
+
+    def set_horizontal_position(self, offset: float) -> None:
+        try:
+            command = f"HORizontal:MAIn:POSition {offset:g}"
+            self.write(command)
+            print(f"[TDS3054C] Executed: {command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to set horizontal offset.") from e
+
+
+    def set_trigger(self, source: str, level: float, slope: str) -> None:
+        try:
+            source_command = f"TRIGger:A:EDGE:SOUrce {source}"
+            self.write(source_command)
+            print(f"[TDS3054C] Executed: {source_command}")
+
+            level_command = f"TRIGger:A:LEVel {level:g}"
+            self.write(level_command)
+            print(f"[TDS3054C] Executed: {level_command}")
+            
+            slope_value = "RISE" if slope.lower() == 'rising' else 'FALL'
+            slope_command = f"TRIGger:A:EDGE:SLOpe {slope_value}"
+            self.write(slope_command)
+            print(f"[TDS3054C] Executed: {slope_command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to configure trigger settings.") from e
+        
 
     def get_waveform(self, channel:int, dataformat: str = 'ASCII') -> str: 
         '''
@@ -232,6 +300,7 @@ class TDS3054C(Oscilloscope):
         except (DeviceCommandError, ValueError) as e:
             raise DeviceCommandError(f"Failed to get waveform from channel {channel}.") from e
 
+
     def build_msg(self, command: str) -> str:
         '''
         Builds HTTP request body message according to the oscilloscope needs. Check ""
@@ -251,6 +320,7 @@ class TDS3054C(Oscilloscope):
 
         return request_bytes
     
+
     def decode_msg(self, msg: str) -> str:
         '''
         Decodes the incoming HTML data. If the textarea fied is not found returns None.

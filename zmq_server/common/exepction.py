@@ -1,11 +1,6 @@
-
-#====================================================================================
-# Device Errors 
-#====================================================================================
-
-class DeviceError(Exception):
-    """Base exception for all device-related errors."""
-    def __init__(self, message="A device error occurred.", device_id=None, **kwargs):
+class AppError(Exception):
+    """Base exception for all custom errors in this application."""
+    def __init__(self, message="An application error occurred.", **kwargs):
         self.message = message
         # Store any other relevant context
         self.context = kwargs
@@ -18,6 +13,13 @@ class DeviceError(Exception):
             'message': self.message,
             'context': self.context
         }
+#====================================================================================
+# Device Errors 
+#====================================================================================
+
+class DeviceError(AppError):
+    """Base exception for all device-related errors."""
+    pass
     
 class DeviceConnectionError(DeviceError):
     """For errors during the connection phase (socket connect, IP/port config)."""
@@ -61,10 +63,21 @@ class AcquisitionTimeoutError(AcquisitionError): # Note: It inherits from Acquis
 #====================================================================================
 # ZMQ Server errors
 #====================================================================================
-class ZMQCommunicationError(DeviceError):
+class ZMQCommunicationError(AppError):
     """A base class for errors during ZMQ communication."""
     pass
 
 class ZMQTimeoutError(ZMQCommunicationError):
     """Raised when a ZMQ socket poll times out waiting for a reply."""
+    pass
+
+#====================================================================================
+# Backend errors
+#====================================================================================
+class BackendError(AppError):
+    """For unexpected, unhandled exceptions caught in a worker thread."""
+    pass
+
+class UnhandledWorkerException(BackendError):
+    """For unexpected, unhandled exceptions caught in a worker thread."""
     pass

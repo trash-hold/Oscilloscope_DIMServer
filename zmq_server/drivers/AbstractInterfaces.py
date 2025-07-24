@@ -2,6 +2,13 @@ from abc import ABC, abstractmethod
 
 class Oscilloscope(ABC):
 
+    @abstractmethod
+    def __init__(self, connection_params: dict):
+        """
+        Initializes the driver with device-specific connection parameters.
+        """
+        pass
+    
     @abstractmethod 
     def make_connection(self) -> None:
         '''
@@ -45,10 +52,28 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
-    def configure(self, json_file: str) -> None:
-        '''
-        Implement oscilloscope configuration by the settings saved in json_file
-        '''
+    def set_vertical_scale(self, channel: int, scale: float) -> None:
+        """Sets the vertical scale (Volts/Div) for a channel."""
+        pass
+
+    @abstractmethod
+    def set_vertical_position(self, channel: int, offset: float) -> None:
+        """Sets the vertical offset for a channel."""
+        pass
+
+    @abstractmethod
+    def set_horizontal_scale(self, scale: float) -> None:
+        """Sets the horizontal scale (Seconds/Div)."""
+        pass
+
+    @abstractmethod
+    def set_horizontal_position(self, offset: float) -> None:
+        """Sets the horizontal offset/position."""
+        pass
+
+    @abstractmethod
+    def set_trigger(self, source: str, level: float, slope: str) -> None:
+        """Sets the main trigger parameters."""
         pass
     
     def get_waveform(self, channel:int) -> str:
