@@ -62,14 +62,13 @@ class MeasurementManager():
                 ch_num = i + 1
                 self.dev.set_channel_state(ch_num, ch.get('enabled', False))
                 if ch.get('enabled'):
-                    scale = self._parse_value_with_unit(ch.get('volts_div', '1'))
-                    self.dev.set_vertical_scale(ch_num, scale)
-                    self.dev.set_vertical_offset(ch_num, ch.get('offset', 0.0))
+                    print(ch.get('volts_div', 1.0))
+                    self.dev.set_vertical_scale(ch_num, ch.get('volts_div', 1.0))
+                    self.dev.set_vertical_position(ch_num, ch.get('position', 0.0))
 
             # --- Apply Horizontal Settings ---
-            h_scale = self._parse_value_with_unit(h_settings.get('time_div', '1ms'))
-            self.dev.set_horizontal_scale(h_scale)
-            self.dev.set_horizontal_offset(h_settings.get('offset', 0.0))
+            self.dev.set_horizontal_scale(h_settings.get('time_div', 0.001))
+            self.dev.set_horizontal_position(h_settings.get('position', 0.0))
 
             # --- Apply Trigger Settings ---
             self.dev.set_trigger(
@@ -83,26 +82,6 @@ class MeasurementManager():
             # Re-raise as a configuration error to be caught by the worker
             raise ConfigurationError(f"Failed to apply settings to device: {e}") from e
         
-    def _parse_value_with_unit(self, value_str: str) -> float:
-        """
-        Parses a string like "500mV" or "10us" into a float in base units (V or s).
-        """
-        value_str = value_str.strip().lower()
-        try:
-            if 'mv' in value_str:
-                return float(value_str.replace('mv', '')) * 1e-3
-            if 'v' in value_str:
-                return float(value_str.replace('v', ''))
-            if 'ms' in value_str:
-                return float(value_str.replace('ms', '')) * 1e-3
-            if 'us' in value_str:
-                return float(value_str.replace('us', '')) * 1e-6
-            if 's' in value_str:
-                return float(value_str.replace('s', ''))
-            # Default case if no unit found
-            return float(value_str)
-        except (ValueError, TypeError):
-            raise ConfigurationError(f"Could not parse value: '{value_str}'")
     
     def sample(self, timeout: int = 60) -> None:
         '''

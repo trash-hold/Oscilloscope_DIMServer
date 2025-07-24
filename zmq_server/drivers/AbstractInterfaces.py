@@ -50,7 +50,7 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
-    def set_vertical_offset(self, channel: int, offset: float) -> None:
+    def set_vertical_position(self, channel: int, offset: float) -> None:
         """Sets the vertical offset for a channel."""
         pass
 
@@ -60,7 +60,7 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
-    def set_horizontal_offset(self, offset: float) -> None:
+    def set_horizontal_position(self, offset: float) -> None:
         """Sets the horizontal offset/position."""
         pass
 

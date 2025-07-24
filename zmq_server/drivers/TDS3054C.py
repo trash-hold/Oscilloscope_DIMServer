@@ -199,9 +199,9 @@ class TDS3054C(Oscilloscope):
             raise DeviceCommandError(f"Failed to set vertical scale for channel {channel}.") from e
         
 
-    def set_vertical_offset(self, channel: int, offset: float) -> None:
+    def set_vertical_position(self, channel: int, offset: float) -> None:
         try:
-            command = f"CH{channel}:OFFSet {offset:g}"
+            command = f"CH{channel}:POSition {offset:g}"
             self.write(command)
             print(f"[TDS3054C] Executed: {command}")
         except DeviceCommandError as e:
@@ -217,7 +217,7 @@ class TDS3054C(Oscilloscope):
             raise DeviceCommandError("Failed to set horizontal scale.") from e
 
 
-    def set_horizontal_offset(self, offset: float) -> None:
+    def set_horizontal_position(self, offset: float) -> None:
         try:
             command = f"HORizontal:MAIn:POSition {offset:g}"
             self.write(command)
