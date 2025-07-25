@@ -37,7 +37,7 @@ include_directories(./include)
 include_directories(${DIM_INCLUDE_DIR})
 
 # Find source files
-file(GLOB_RECURSE SOURCES "src/*.cxx")
+file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.cxx")
 
 # Remote dependencies
 # ==========================================================
@@ -81,3 +81,8 @@ target_link_libraries(my_dim_server PRIVATE
  Threads::Threads
  nlohmann_json::nlohmann_json
  )
+
+ target_include_directories(my_dim_server PRIVATE
+    ${cppzmq_SOURCE_DIR}/include
+    ${nlohmann_json_SOURCE_DIR}/include
+)
