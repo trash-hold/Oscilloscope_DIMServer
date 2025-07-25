@@ -63,6 +63,7 @@ public:
 // ===================================================================
 class ZmqCommunicator {
     zmq::context_t context;
+    std::mutex client_id_mutex;
 
     std::atomic<bool> running;
     
@@ -80,6 +81,9 @@ class ZmqCommunicator {
 
     char state_buffer[256];
     char waveform_buffer[32768]; // Waveforms can be large
+
+
+
 
 public:
     ZmqCommunicator(ReplyService& service) :
@@ -124,67 +128,41 @@ public:
         }
     }
 
-    void send_command(const std::string& cmd_text, const std::string& cmd_id);
+    void send_command(const std::string& json_str);
 
 private:
 
     void router_loop() {
         while (running) {
-            zmq::multipart_t multipart_msg;
-            
-            bool result = multipart_msg.recv(router_socket, static_cast<int>(zmq::recv_flags::dontwait));
-            if (!result) {
-                // No message received, sleep and continue
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                continue;
+        zmq::multipart_t multipart_msg;
+        if (multipart_msg.recv(router_socket, ZMQ_DONTWAIT)) {
+            {
+                std::lock_guard<std::mutex> lock(client_id_mutex);
+                const auto& identity_frame = multipart_msg.front();
+                zmq::message_t identity_copy(identity_frame.data(), identity_frame.size());
+                python_client_id = std::move(identity_copy);
             }
-
-            const auto& identity_frame = multipart_msg.front();
-            zmq::message_t identity_copy(identity_frame.data(), identity_frame.size());
-            // Then move this new, independent message into our class member.
-            python_client_id = std::move(identity_copy);
 
             std::string received_str = multipart_msg.at(2).to_string();
-
             try {
                 json j = json::parse(received_str);
-
-                // --- ROBUST PARSING FIX ---
-                if (j.contains("type") && j["type"].is_string()) {
-                    std::string msg_type = j["type"];
-
-                    if (msg_type == "handshake") {
-                        std::cout << "Python client connected with handshake." << std::endl;
-                    } 
-                    else if (msg_type == "reply") {
-                        std::cout << "Received reply from Python: " << received_str << std::endl;
-                        
-                        if (j.contains("status") && j["status"] == "ok") {
-                            // Check for payload and ensure it's a string before using
-                            if (j.contains("payload") && j["payload"].is_string()) {
-                                reply_svc.update(j["payload"]);
-                            } else {
-                                reply_svc.update("[OK reply received, but payload is missing or not a string]");
-                            }
-                        } else {
-                            // Check for message and ensure it's a string before using
-                            if (j.contains("message") && j["message"].is_string()) {
-                                reply_svc.update("Error from Python: " + j["message"].get<std::string>());
-                            } else {
-                                reply_svc.update("Error reply from Python, but message field is missing.");
-                            }
-                        }
+                if (j.contains("type") && j["type"] == "handshake") {
+                    std::cout << "Python client connected with handshake." << std::endl;
+                } else if (j.contains("type") && j["type"] == "reply") {
+                    if (j.contains("status") && j["status"] == "ok") {
+                        reply_svc.update(j.value("payload", "[empty]"));
+                    } else {
+                        reply_svc.update("Error: " + j.value("message", "[no msg]"));
                     }
-                } else {
-                    std::cerr << "Received message from Python with no 'type' field: " << received_str << std::endl;
                 }
-
             } catch (const json::parse_error& e) {
-                std::cerr << "JSON parse error: " << e.what() << std::endl;
-                reply_svc.update("Error: Received malformed JSON from Python.");
+                reply_svc.update("Error: Malformed JSON from Python.");
             }
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
+}
 
     void subscribe_loop() {
         while (running) {
@@ -214,41 +192,119 @@ CommandService::CommandService(ZmqCommunicator& comm):
 
 
 void CommandService::commandHandler() {
-    std::string cmd = getString();
-    std::cout << "Received DIM command: " << cmd << std::endl;
-    std::string cmd_id = "cmd_" + std::to_string(command_counter++);
-    zmq_comm.send_command(cmd, cmd_id);
+    std::string cmd_text = getString();
+    std::cout << "Received DIM command: " << cmd_text << std::endl;
+
+    json j;
+    j["id"] = "cmd_" + std::to_string(command_counter++);
+    j["type"] = "command";
+    j["command"] = cmd_text; // Or parse it further if needed
+    j["params"] = {}; // Add params if any
+
+    zmq_comm.send_command(j.dump());
 }
 
 
-void ZmqCommunicator::send_command(const std::string& cmd_text, const std::string& cmd_id) {
-    if (!python_client_id.size()) {
-        std::cerr << "Error: Python client has not connected yet. Cannot send command." << std::endl;
+void ZmqCommunicator::send_command(const std::string& json_str) {
+    std::lock_guard<std::mutex> lock(client_id_mutex);
+    if (python_client_id.size() == 0) {
         reply_svc.update("Error: Python client not connected.");
         return;
     }
-
-    json j;
-    j["type"] = "command";
-    j["id"] = cmd_id;
-
-    if (cmd_text.find('?') != std::string::npos) {
-            j["command"] = "raw_query";
-            j["params"] = { {"query", cmd_text} };
-    } else {
-        j["command"] = "raw_write";
-        j["params"] = { {"command", cmd_text} };
-    }
-
-    std::string msg_str = j.dump();
-    std::cout << "Sending command to Python: " << msg_str << std::endl;
-
-    // Send a 3-part message: [identity, empty_delimiter, content]
-    // This is the most robust way to ensure compatibility.
+    std::cout << "Sending command to Python: " << json_str << std::endl;
     router_socket.send(python_client_id, zmq::send_flags::sndmore);
     router_socket.send(zmq::buffer(""), zmq::send_flags::sndmore);
-    router_socket.send(zmq::buffer(msg_str), zmq::send_flags::none);
+    router_socket.send(zmq::buffer(json_str), zmq::send_flags::none);
 }
+
+class GenericJsonCommand : public DimCommand {
+    ZmqCommunicator& zmq_comm;
+    std::string python_command;
+    std::string param_name;
+    long command_counter = 0;
+
+public:
+    GenericJsonCommand(ZmqCommunicator& comm, const char* dim_name, const char* dim_format, 
+                       const std::string& py_cmd, const std::string& param) :
+        DimCommand(dim_name, dim_format),
+        zmq_comm(comm),
+        python_command(py_cmd),
+        param_name(param) {}
+
+    void commandHandler() override {
+        json j;
+        j["id"] = python_command + "_" + std::to_string(command_counter++);
+        j["command"] = python_command;
+
+        // Determine which data type to get based on the format string
+        std::string format = getFormat();
+        if (format.rfind("I", 0) == 0) { // Starts with "I"
+            j["params"][param_name] = getInt();
+        } else if (format.rfind("F", 0) == 0 || format.rfind("D", 0) == 0) { // Starts with "F" or "D"
+            j["params"][param_name] = getFloat();
+        } else { // Default to String
+            j["params"][param_name] = getString();
+        }
+        
+        zmq_comm.send_command(j.dump());
+    }
+};
+
+struct ChannelCommandData {
+    int channel;
+    float value; // Use float as a universal type for voltage or state (0.0/1.0)
+};
+
+class ChannelJsonCommand : public DimCommand {
+    ZmqCommunicator& zmq_comm;
+    std::string python_command;
+    std::string value_param_name;
+    long command_counter = 0;
+
+public:
+    ChannelJsonCommand(ZmqCommunicator& comm, const char* dim_name, 
+                       const std::string& py_cmd, const std::string& value_param) :
+        DimCommand(dim_name, "I:1;F:1"), // Expects an integer (channel) and a float (value)
+        zmq_comm(comm),
+        python_command(py_cmd),
+        value_param_name(value_param) {}
+
+    void commandHandler() override {
+        ChannelCommandData* data = (ChannelCommandData*)getData();
+
+        json j;
+        j["id"] = python_command + "_" + std::to_string(command_counter++);
+        j["command"] = python_command;
+        j["params"]["channel"] = data->channel;
+        j["params"][value_param_name] = data->value;
+        
+        zmq_comm.send_command(j.dump());
+    }
+};
+
+class RawCommandService : public DimCommand {
+    ZmqCommunicator& zmq_comm;
+    long command_counter = 0;
+public:
+    RawCommandService(ZmqCommunicator& comm) :
+        DimCommand("SCOPE/COMMAND", "C"), zmq_comm(comm) {}
+
+    void commandHandler() override {
+        std::string cmd_text = getString();
+        json j;
+        j["id"] = "raw_cmd_" + std::to_string(command_counter++);
+        j["type"] = "command";
+        if (cmd_text.find('?') != std::string::npos) {
+            j["command"] = "raw_query";
+            j["params"] = { {"query", cmd_text} };
+        } else {
+            j["command"] = "raw_write";
+            j["params"] = { {"command", cmd_text} };
+        }
+        zmq_comm.send_command(j.dump());
+    }
+};
+
 
 // ===================================================================
 // Main Application Entry Point
@@ -258,11 +314,18 @@ int main() {
     char waveform_initial_val[] = "N/A";
 
     ReplyService reply_service;
+
+    ZmqCommunicator zmq_comm(reply_service);
+    
     DimService state_service("SCOPE/STATE", state_initial_val);
     DimService waveform_service("SCOPE/WAVEFORM", waveform_initial_val);
-    
-    ZmqCommunicator zmq_comm(reply_service);
-    CommandService command_service(zmq_comm);
+    RawCommandService raw_cmd(zmq_comm);
+    ChannelJsonCommand channel_state_cmd(zmq_comm, "SCOPE/CHANNEL/SET_STATE", "set_channel_state", "state");
+    ChannelJsonCommand channel_volts_cmd(zmq_comm, "SCOPE/CHANNEL/SET_VOLTS_DIV", "set_channel_volts", "volts");
+    GenericJsonCommand trigger_edge_cmd(zmq_comm, "SCOPE/TRIGGER/SET_EDGE", "C", "set_trigger_edge", "edge");
+    GenericJsonCommand trigger_level_cmd(zmq_comm, "SCOPE/TRIGGER/SET_LEVEL", "F", "set_trigger_level", "level");
+
+    GenericJsonCommand acq_control_cmd(zmq_comm, "SCOPE/ACQUISITION_CONTROL", "I", "set_acquisition_state", "state");
 
     zmq_comm.start("tcp://*:5555", "tcp://localhost:5557"); 
     DimServer::start("OscilloscopeServer");
