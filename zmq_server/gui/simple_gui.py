@@ -1,52 +1,56 @@
-# Overall functionality
 import sys
 import json
-import time
 
 # GUI
-from PySide6.QtWidgets import ( QMainWindow, QWidget, QVBoxLayout, 
-    QPushButton, QLabel, QTextEdit, QMessageBox, QSpinBox, QCheckBox, QHBoxLayout
-)
-from PySide6.QtCore import Slot
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QMessageBox
+from PySide6.QtCore import Slot, Signal
 
-# Custom classes
-from server.zmq_manager import *
-from common.exepction import * 
+# Backend
+from server.zmq_manager import ServerManager 
+
+# Custom UI panels
 from gui.panels import ControlPanel, ActionPanel
-from server.backend import BackendService
 
-
+# Error handling
+from common.exepction import * 
 
 class OscilloscopeControlGUI(QMainWindow):
     measurement_state_changed = Signal(bool) # True if running, False if stopped
 
     def __init__(self, config_path, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Oscilloscope Control Framework")
+        self.setWindowTitle("Oscilloscope Control GUI (Decoupled)")
         self.setGeometry(100, 100, 1000, 700)
 
         try:
             with open(config_path, 'r') as f:
-                config = json.load(f)
+                self.config = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
             QMessageBox.critical(self, "Configuration Error", f"Failed to load config file '{config_path}'.\n{e}")
             sys.exit(1)
 
         try:
-            self.backend = BackendService(config)
+            self.backend_communicator = ServerManager(self.config)
         except Exception as e:
-            QMessageBox.critical(self, "Initialization Error", f"Failed to initialize the backend.\n{e}")
+            QMessageBox.critical(self, "Initialization Error", f"Failed to initialize the ZMQ communicator.\n{e}\n\nIs the backend process running?")
             sys.exit(1)
 
-#        self.create_layout()
+        # The rest of the GUI creation process remains the same
+        self.create_layout()
+        self.connect_signals()
 
-    
     def create_layout(self) -> None:
-        # Custom panels
-        self.control_panel = ControlPanel(self.backend.device_config)
+        """Creates the main window layout using custom panels."""
+        try:
+            with open(self.config['device_profile_path'], 'r') as f:
+                device_config = json.load(f)
+        except Exception as e:
+            QMessageBox.critical(self, "Device Profile Error", f"Failed to load device profile.\n{e}")
+            device_config = {} # Use an empty config to prevent crashing
+
+        self.control_panel = ControlPanel(device_config)
         self.action_panel = ActionPanel()
 
-        # Layout
         main_layout = QHBoxLayout()
         main_layout.addWidget(self.control_panel, 1)
         main_layout.addWidget(self.action_panel, 2)
@@ -54,71 +58,81 @@ class OscilloscopeControlGUI(QMainWindow):
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
-        # Signals
-        self.backend.status_update.connect(self.action_panel.update_status)
-        self.backend.error_occurred.connect(self.handle_error)
+    def connect_signals(self) -> None:
+        """Connects all signals and slots for the application."""
+        # --- Connect to the new ServerManager's signals ---
+        self.backend_communicator.status_update.connect(self.action_panel.update_status)
+        self.backend_communicator.error_occurred.connect(self.handle_error)
+        self.backend_communicator.waveform_update.connect(self.on_waveform_update)
+        self.backend_communicator.reply_update.connect(self.on_command_reply)
+
+        # Connect signals from UI elements to this window's slots
         self.action_panel.start_button.clicked.connect(self.on_start_clicked)
         self.action_panel.stop_button.clicked.connect(self.on_stop_clicked)
         self.control_panel.settings_changed.connect(self.on_settings_changed)
 
+        # Connect internal signal for managing UI state
         self.measurement_state_changed.connect(self.control_panel.set_enabled_controls)
         self.measurement_state_changed.connect(self.action_panel.set_running_state)
 
-    
-    @Slot(dict)
-    def handle_error(self, error_data: dict):
-        """
-        Receives structured error data and presents an appropriate
-        dialog box to the user based on the error type.
-        """
-        error_type = error_data.get('type', 'UnknownError')
-        error_message = error_data.get('message', 'An unknown error occurred.')
 
-        self.action_panel.status_label.setText(f"Error: {error_message}")
-
-        if error_type == "AcquisitionTimeoutError" and self.continue_on_timeout_checkbox.isChecked():
-            self.action_panel.log_message(f"WARNING ({error_type}): {error_message}. Continuing to next cycle.", "orange")
-     
-        elif error_type == "AcquisitionTimeoutError":
-            QMessageBox.warning(self, "Acquisition Timeout", error_message)
-            self.action_panel.log_message(f"WARNING ({error_type}): {error_message}", "orange") 
+    @Slot(str)
+    def handle_error(self, error_message: str):
+        """
+        Receives a simple error string from the backend and displays it.
+        The backend is now responsible for formatting the error.
+        """
+        self.action_panel.status_label.setText(f"Error!")
+        self.action_panel.log_message(f"ERROR: {error_message}", "red")
+        QMessageBox.warning(self, "Backend Error", error_message)
         
-        elif error_type in ["DeviceConnectionError", "ConfigurationError", "UnexpectedDeviceError"]:
-            # These are critical, likely unrecoverable hardware/config errors.
-            QMessageBox.critical(self, "Hardware/Configuration Error", f"{error_message}\nPlease check the device connection and configuration, then restart the application.")
-            self.action_panel.log_message(f"FATAL ({error_type}): {error_message}", "red")
-            self.set_ui_for_running_state(False)
-            self.start_button.setEnabled(False)
-
-        else: # Catches ZMQ errors, UnhandledWorkerException, etc.
-            QMessageBox.critical(self, "System Error", f"{error_message}\nThe measurement has been stopped. Check logs for details.")
-            self.action_panel.log_message(f"CRITICAL ({error_type}): {error_message}", "purple")
-
-            self.set_ui_for_running_state(False)
+        # Assume any error from the backend stops the measurement
+        self.measurement_state_changed.emit(False)
 
     @Slot()
     def on_start_clicked(self):
-        timeout = self.action_panel.timeout_spinbox.value()
-        continue_on_timeout = self.action_panel.continue_on_timeout_checkbox.isChecked()
-        self.backend.start_continuous_cycles(timeout, continue_on_timeout)
+        """
+        Sends the 'start' command to the backend.
+        The backend is responsible for its own settings (like timeout).
+        """
+        self.action_panel.update_status("Sending 'start' command to backend...")
+        self.backend_communicator.start_continuous()
         self.measurement_state_changed.emit(True)
 
     @Slot()
     def on_stop_clicked(self):
-        stop_message = "Stopping... The current cycle will be the last."
-        self.action_panel.update_status(stop_message)
-        
-        self.backend.stop_continuous_cycles()
+        """Sends the 'stop' command to the backend."""
+        self.action_panel.update_status("Sending 'stop' command to backend...")
+        self.backend_communicator.stop_continuous()
         self.measurement_state_changed.emit(False)
 
     @Slot(dict)
     def on_settings_changed(self, settings: dict):
         """Forwards new measurement settings to the backend."""
-        self.action_panel.log_message("New settings received. Applying to next measurement.", "green")
-        
-        self.backend.update_measurement_config(settings)
+        self.action_panel.log_message("New settings received. Sending to backend...", "green")
+        self.backend_communicator.apply_settings(settings)
 
-        
+    @Slot(dict)
+    def on_waveform_update(self, waveform_data: dict):
+        """Placeholder slot to handle incoming waveform data."""
+        # This is where you would update a plot widget
+        points = waveform_data.get('points', 0)
+        self.action_panel.log_message(f"Received waveform with {points} points.", "blue")
+        # self.plot_widget.update_data(waveform_data['data'])
+
+    @Slot(dict)
+    def on_command_reply(self, reply: dict):
+        """Handles generic replies from commands sent to the backend."""
+        status = reply.get("status", "unknown")
+        payload = reply.get("payload", "No payload.")
+        if status == "ok":
+            self.action_panel.log_message(f"Backend reply: {payload}", "gray")
+        else:
+            # This path is for logical errors, not exceptions
+            message = reply.get("message", "Unknown error.")
+            self.action_panel.log_message(f"Backend command error: {message}", "orange")
+
     def closeEvent(self, event):
-        self.backend.close()
+        """Ensures the communicator thread is shut down cleanly."""
+        self.backend_communicator.close()
         event.accept()

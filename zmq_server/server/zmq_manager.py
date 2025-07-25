@@ -1,117 +1,152 @@
-import json
 import zmq
-import time
-import logging      # For Error handling
-from PySide6.QtCore import QObject, QThread, Signal, Slot, QTimer   # Integration with GUI
-import msgpack
-import msgpack_numpy as mpack_np
-from common.exepction import *
+import json
+import logging
+import queue
+from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-from manager.measurement_manager import MeasurementManager 
-
-class CommandWorker(QObject):
+class GuiCommunicator(QObject):
     """
-    Runs in a dedicated thread, listening for commands from the C++
-    DIM server via a ZMQ DEALER socket. It executes commands and
-    sends replies back.
+    Runs in a QThread within the GUI application. Handles all ZMQ communication
+    with the backend, keeping the main GUI thread responsive.
     """
-    status_update = Signal(str)
-    error = Signal(dict)
+    # Signals to send data/status updates to the main GUI thread
+    status_received = Signal(str)
+    error_received = Signal(str)
+    waveform_received = Signal(dict)
+    command_reply_received = Signal(dict)
 
-    def __init__(self, manager: MeasurementManager, dim_endpoint: str):
+    def __init__(self, config: dict):
         super().__init__()
-        self.manager = manager
-        self.dim_endpoint = dim_endpoint
-        self._is_running = False
-
-        # Each worker thread MUST have its own context and socket
-        self.context = zmq.Context()
-        # <--- CHANGE: Use DEALER socket for asynchronous, bidirectional communication --->
-        self.socket = self.context.socket(zmq.DEALER)
-        self.poller = zmq.Poller()
+        self.config = config
+        self._is_running = True
+        self.command_queue = queue.Queue()
 
     @Slot()
-    def run(self):
-        """
-        The main loop for the worker thread. Connects the socket and
-        continuously polls for incoming messages.
-        """
-        self.status_update.emit("Worker thread started. Connecting to C++ server...")
-        self.socket.connect(self.dim_endpoint)
-        self.poller.register(self.socket, zmq.POLLIN)
-        self._is_running = True
+    def run_communication_loop(self):
+        """The main loop for the communicator thread."""
+        context = zmq.Context()
         
-        # Send an initial "hello" so the ROUTER knows our identity
-        self.socket.send_json({"type": "status", "payload": "Python worker connected"})
+        # REQ socket for sending commands
+        cmd_socket = context.socket(zmq.REQ)
+        cmd_socket.connect(self.config['local_command_endpoint'])
+
+        # SUB socket for receiving async updates
+        sub_socket = context.socket(zmq.SUB)
+        sub_socket.connect(self.config['local_publish_endpoint'])
+        sub_socket.setsockopt_string(zmq.SUBSCRIBE, "status")
+        sub_socket.setsockopt_string(zmq.SUBSCRIBE, "error")
+        sub_socket.setsockopt_string(zmq.SUBSCRIBE, "waveform")
+
+        poller = zmq.Poller()
+        poller.register(sub_socket, zmq.POLLIN)
 
         while self._is_running:
-            # Poll for messages with a timeout (e.g., 100ms)
-            socks = dict(self.poller.poll(100))
-            if self.socket in socks and socks[self.socket] == zmq.POLLIN:
-                # A DEALER socket receives a multi-part message from a ROUTER
-                # The first part is an empty delimiter, the second is the content
-                _, msg_bytes = self.socket.recv_multipart()
-                self.handle_message(msg_bytes)
+            # 1. Check for commands from the GUI to send to the backend
+            try:
+                command_to_send = self.command_queue.get_nowait()
+                logging.info(f"Sending command: {command_to_send}")
+                cmd_socket.send_json(command_to_send)
+                reply = cmd_socket.recv_json()
+                logging.info(f"Received reply: {reply}")
+                self.command_reply_received.emit(reply)
+            except queue.Empty:
+                pass # No commands to send
+            except zmq.ZMQError as e:
+                self.error_received.emit(f"ZMQ Error sending command: {e}")
 
-        # Clean shutdown
-        self.socket.close()
-        self.context.term()
-        self.status_update.emit("Worker thread stopped.")
+            # 2. Poll for asynchronous messages from the backend (non-blocking)
+            socks = dict(poller.poll(100)) # Poll for 100ms
+            if sub_socket in socks:
+                topic, message_raw = sub_socket.recv_string().split(' ', 1)
+                data = json.loads(message_raw)
+                if topic == "status":
+                    self.status_received.emit(data)
+                elif topic == "error":
+                    self.error_received.emit(data)
+                elif topic == "waveform":
+                    # For real data, you might receive raw bytes (msgpack)
+                    # For this example, we assume JSON
+                    self.waveform_received.emit(data)
 
-    def handle_message(self, msg_bytes: bytes):
-        """Parses an incoming message and routes it to the correct handler."""
-        try:
-            message = json.loads(msg_bytes.decode('utf-8'))
-            msg_type = message.get("type")
-
-            if msg_type == "command":
-                self.handle_device_command(message)
-            else:
-                logging.warning(f"Received unknown message type: {msg_type}")
-                self.status_update.emit(f"Warning: Received unknown message type '{msg_type}'")
-
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logging.error(f"Failed to parse incoming message: {e}")
-            self.error.emit(ProtocolError(f"Malformed message received: {e}").to_dict())
-
-    def handle_device_command(self, message: dict):
-        """Executes a raw command on the device and sends a reply."""
-        cmd_id = message.get("id", "unknown")
-        command = message.get("payload")
-
-        if not command:
-            self.send_reply(cmd_id, "Error: Command payload was empty.", is_error=True)
-            return
-
-        self.status_update.emit(f"Executing command: {command}")
-        try:
-            # Use our new generic method in the manager
-            result = self.manager.execute_raw_command(command)
-            self.send_reply(cmd_id, result)
-
-        except DeviceError as e:
-            self.status_update.emit(f"Error executing '{command}': {e}")
-            self.send_reply(cmd_id, str(e), is_error=True)
-        except Exception as e:
-            logging.critical(f"Unhandled exception during command execution: {e}", exc_info=True)
-            self.send_reply(cmd_id, f"An unexpected internal error occurred: {e}", is_error=True)
-
-    def send_reply(self, cmd_id: str, payload: str, is_error: bool = False):
-        """Constructs and sends a JSON reply to the C++ server."""
-        reply = {
-            "type": "reply",
-            "id": cmd_id,
-            "payload": payload,
-            "error": is_error
-        }
-        self.socket.send_json(reply)
+        cmd_socket.close()
+        sub_socket.close()
+        context.term()
+        logging.info("GUI Communicator shut down cleanly.")
 
     @Slot()
     def stop(self):
-        """Signals the main loop to terminate."""
+        """Signals the loop to terminate."""
         self._is_running = False
 
+    # --- Public slots for the GUI to call ---
 
+    @Slot(dict)
+    def send_command(self, command_dict: dict):
+        """Generic slot to queue any command for sending."""
+        self.command_queue.put(command_dict)
+
+
+class ServerManager(QObject):
+    """
+    The main interface for the GUI. It orchestrates the GuiCommunicator thread
+    and provides a clean API for the main window to use.
+    """
+    # Expose signals for the GUI
+    status_update = Signal(str)
+    error_occurred = Signal(str)
+    waveform_update = Signal(dict)
+    reply_update = Signal(dict)
+
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self.worker_thread = QThread()
+        self.communicator = GuiCommunicator(config)
+        
+        self.communicator.moveToThread(self.worker_thread)
+
+        # Connect signals from the communicator to the manager's signals
+        self.communicator.status_received.connect(self.status_update)
+        self.communicator.error_received.connect(self.error_occurred)
+        self.communicator.waveform_received.connect(self.waveform_update)
+        self.communicator.command_reply_received.connect(self.reply_update)
+
+        # Connect thread management signals
+        self.worker_thread.started.connect(self.communicator.run_communication_loop)
+        
+        self.worker_thread.start()
+        logging.info("ServerManager started and moved GuiCommunicator to a new thread.")
+
+    def close(self):
+        """Shuts down the communicator thread cleanly."""
+        if self.worker_thread.isRunning():
+            self.communicator.stop()
+            self.worker_thread.quit()
+            if not self.worker_thread.wait(3000):
+                logging.warning("Communicator thread did not shut down cleanly.")
+
+    # --- High-level methods for the GUI to call ---
+
+    @Slot()
+    def start_continuous(self):
+        cmd = {"command": "start_continuous_acquisition", "params": {}}
+        self.communicator.send_command(cmd)
+
+    @Slot()
+    def stop_continuous(self):
+        cmd = {"command": "stop_continuous_acquisition", "params": {}}
+        self.communicator.send_command(cmd)
+
+    @Slot(dict)
+    def apply_settings(self, settings: dict):
+        cmd = {"command": "apply_settings", "params": settings}
+        self.communicator.send_command(cmd)
+
+    @Slot(str)
+    def send_raw_query(self, query: str):
+        cmd = {"command": "raw_query", "params": {"query": query}}
+        self.communicator.send_command(cmd)
+
+'''
 # ===================================================================
 # The Worker: Performs the blocking measurement task
 # ===================================================================
@@ -229,50 +264,7 @@ class MeasurementWorker(QObject):
             self.socket.close(linger=0)
         self.context.term()
 
-
-# ===================================================================
-# The Manager: Orchestrates everything without blocking the GUI
-# ===================================================================
-class ServerManager(QObject):
-    """
-    Manages the CommandWorker thread.
-    """
-    status_update = Signal(str)
-    error_occurred = Signal(dict)
-
-    def __init__(self, config, manager: MeasurementManager, parent=None):
-        super().__init__(parent)
         
-        # Worker and Thread Setup
-        self.worker_thread = QThread()
-        self.worker = CommandWorker(
-            manager,
-            config['dim_server_endpoint']
-        )
-        self.worker.moveToThread(self.worker_thread)
-
-        # Connect signals and slots
-        self.worker.status_update.connect(self.status_update)
-        self.worker.error.connect(self.error_occurred)
-        
-        # When the thread starts, call the worker's run method
-        self.worker_thread.started.connect(self.worker.run)
-        
-        # Start the thread
-        self.worker_thread.start()
-
-    def close(self):
-        """Shuts down the worker thread cleanly."""
-        if self.worker_thread.isRunning():
-            # Tell the worker's loop to stop
-            self.worker.stop()
-            # Wait for the thread to finish gracefully
-            if not self.worker_thread.wait(3000):
-                logging.warning("Worker thread did not shut down cleanly.")
-                self.worker_thread.terminate() # Force terminate if it's stuck
-        print("Server manager closed cleanly.")
-
-'''
 # ===================================================================
 # The Manager: Orchestrates everything without blocking the GUI
 # ===================================================================

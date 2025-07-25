@@ -4,5 +4,6 @@
 **/bin/** 
 **/secret/**
 **/__pycache__/**
+**/.vscode/**
 todo.md
 
