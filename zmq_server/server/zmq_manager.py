@@ -4,6 +4,89 @@ import logging
 import queue
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
+
+class ZMQCommunicator:
+    """
+    Encapsulates all ZMQ communication logic for the backend.
+    It creates, manages, and polls all sockets, providing a clean
+    interface for the main application logic.
+    """
+    def __init__(self, config: dict):
+        self.context = zmq.Context()
+
+        # --- Socket for DIM Server Commands (DEALER) ---
+        self.dim_socket = self.context.socket(zmq.DEALER)
+        self.dim_socket.connect(config['dim_router_endpoint'])
+
+        # --- Socket for Local GUI Commands (REP) ---
+        self.gui_socket = self.context.socket(zmq.REP)
+        self.gui_socket.bind(config['local_command_endpoint'])
+
+        # --- Socket for Publishing to the GUI (PUB) ---
+        self.gui_pub_socket = self.context.socket(zmq.PUB)
+        self.gui_pub_socket.bind(config['local_publish_endpoint'])
+
+        # --- Socket for Publishing to the DIM Server (PUB) ---
+        self.dim_pub_socket = self.context.socket(zmq.PUB)
+        self.dim_pub_socket.bind(config['dim_publish_endpoint'])
+
+        # --- Poller to manage all readable sockets ---
+        self.poller = zmq.Poller()
+        self.poller.register(self.dim_socket, zmq.POLLIN)
+        self.poller.register(self.gui_socket, zmq.POLLIN)
+
+        logging.info("ZMQCommunicator initialized with 4 sockets.")
+
+    def poll(self, timeout=None) -> dict:
+        """
+        Polls the sockets for incoming messages.
+        Returns a dictionary of sockets that have events.
+        """
+        return dict(self.poller.poll(timeout))
+
+    def receive_from_dim(self) -> dict:
+        """Receives a multipart JSON message from the DIM server's ROUTER."""
+        # ROUTER sends [identity, delimiter, message]
+        # DEALER receives [delimiter, message]
+        _ = self.dim_socket.recv() # Discard the empty delimiter
+        msg_raw = self.dim_socket.recv_string()
+        return json.loads(msg_raw)
+
+    def receive_from_gui(self) -> dict:
+        """Receives a single-part JSON message from the GUI's REQ socket."""
+        msg_raw = self.gui_socket.recv_string()
+        return json.loads(msg_raw)
+
+    def reply_to_dim(self, reply: dict):
+        """Sends a multipart JSON reply to the DIM server."""
+        reply['type'] = 'reply'
+        # DEALER must send [delimiter, message] to be routed correctly
+        self.dim_socket.send(b'', zmq.SNDMORE)
+        self.dim_socket.send_json(reply)
+
+    def reply_to_gui(self, reply: dict):
+        """Sends a single-part JSON reply to the GUI."""
+        self.gui_socket.send_json(reply)
+
+    def publish_to_gui(self, topic: str, payload):
+        """Publishes a multipart message (topic, json_payload) to the GUI."""
+        self.gui_pub_socket.send_string(topic, zmq.SNDMORE)
+        self.gui_pub_socket.send_json(payload)
+        logging.info(f"Published to GUI on topic '{topic}'")
+
+    def publish_to_dim(self, topic: str, payload: str):
+        """Publishes a simple string message (topic payload) to the DIM server."""
+        self.dim_pub_socket.send_string(f"{topic} {payload}")
+        logging.info(f"Published to DIM on topic '{topic}'")
+
+    def stop(self):
+        """Closes all sockets and terminates the context cleanly."""
+        logging.info("Shutting down ZMQCommunicator.")
+        for sock in [self.dim_socket, self.gui_socket, self.gui_pub_socket, self.dim_pub_socket]:
+            sock.close(linger=0)
+        self.context.term()
+
+        
 class GuiCommunicator(QObject):
     """
     Runs in a QThread within the GUI application. Handles all ZMQ communication

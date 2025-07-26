@@ -116,7 +116,7 @@ class TDS3054C(Oscilloscope):
             device_num = self.query("*IDN?")
             print("Connected to: {0}".format(device_num))
             
-            if "TDS3054C" in device_num:
+            if "TDS 3054C" in device_num:
                 return True
             
             raise UnexpectedDeviceError(f"The connected device identifies as '{device_num}', not TDS3054C.")

@@ -15,7 +15,8 @@ namespace Constants {
 
     // ZMQ Endpoints and Topics
     constexpr const char* ZMQ_ROUTER_ENDPOINT = "tcp://*:5555";
-    constexpr const char* ZMQ_SUB_ENDPOINT = "tcp://localhost:5557";
+    // This MUST match the 'dim_publish_endpoint' in the Python config
+    constexpr const char* ZMQ_SUB_ENDPOINT = "tcp://localhost:5558"; 
     constexpr const char* ZMQ_STATE_TOPIC = "backend_state";
     constexpr const char* ZMQ_WAVEFORM_TOPIC = "waveform";
 
