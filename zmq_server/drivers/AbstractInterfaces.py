@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 
 class Oscilloscope(ABC):
 
@@ -72,8 +73,18 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
-    def set_trigger(self, source: str, level: float, slope: str) -> None:
-        """Sets the main trigger parameters."""
+    def set_trigger_level(self, level: float) -> None:
+        """Sets the trigger level"""
+        pass
+
+    @abstractmethod
+    def set_trigger_slope(self, slope: str) -> None:
+        """"Sets the trigger slope"""
+        pass
+
+    @abstractmethod
+    def set_trigger_channel(self, channel: int) -> None:
+        """"Sets the trigger source"""
         pass
     
     def get_waveform(self, channel:int) -> str:

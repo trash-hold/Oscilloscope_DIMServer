@@ -46,6 +46,7 @@ class Command(Enum):
     # Commands originating from the DIM server
     SET_CHANNEL_ENABLED = "set_channel_enabled"
     SET_CHANNEL_SCALE = "set_channel_scale"
+    SET_TRIGGER_CHANNEL = "set_trigger_channel"
     SET_TRIGGER_SLOPE = "set_trigger_slope"
     SET_TRIGGER_LEVEL = "set_trigger_level"
     SET_ACQUISITION_STATE = "set_acquisition_state"

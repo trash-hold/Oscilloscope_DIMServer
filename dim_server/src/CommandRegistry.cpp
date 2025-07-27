@@ -8,7 +8,12 @@ using json = nlohmann::json;
 void register_all_commands(ZmqCommunicator& comm) {
 
     // --- Register Generic Commands using Lambdas ---
-
+    // SCOPE/TRIGGER/SET_CHANNEL (String parameter)
+    new FlexibleJsonCommand(comm, Constants::TRIG_SET_CHANNEL_CMD, "I", Constants::PY_SET_TRIG_CHANNEL,
+        [](DimCommand* cmd, json& params) {
+            params["channel"] = cmd->getInt();
+        }
+    );
     // SCOPE/TRIGGER/SET_SLOPE (String parameter)
     new FlexibleJsonCommand(comm, Constants::TRIG_SET_SLOPE_CMD, "C", Constants::PY_SET_TRIG_SLOPE,
         [](DimCommand* cmd, json& params) {

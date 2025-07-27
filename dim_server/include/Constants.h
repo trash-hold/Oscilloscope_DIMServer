@@ -9,6 +9,7 @@ namespace Constants {
     constexpr const char* RAW_CMD = "SCOPE/RAW";
     constexpr const char* CHAN_SET_ENABLED_CMD = "SCOPE/CHANNEL/SET_ENABLED";
     constexpr const char* CHAN_SET_SCALE_CMD = "SCOPE/CHANNEL/SET_SCALE";
+    constexpr const char* TRIG_SET_CHANNEL_CMD = "SCOPE/TRIGGER/SET_CHANNEL";
     constexpr const char* TRIG_SET_SLOPE_CMD = "SCOPE/TRIGGER/SET_SLOPE";
     constexpr const char* TRIG_SET_LEVEL_CMD = "SCOPE/TRIGGER/SET_LEVEL";
     constexpr const char* ACQ_SET_STATE_CMD = "SCOPE/ACQUISITION/SET_STATE";
@@ -34,6 +35,7 @@ namespace Constants {
     // Python Command Names ---
     constexpr const char* PY_SET_CHAN_ENABLED = "set_channel_enabled";
     constexpr const char* PY_SET_CHAN_SCALE = "set_channel_scale";
+    constexpr const char* PY_SET_TRIG_CHANNEL = "set_trigger_channel";
     constexpr const char* PY_SET_TRIG_SLOPE = "set_trigger_slope";
     constexpr const char* PY_SET_TRIG_LEVEL = "set_trigger_level";
     constexpr const char* PY_SET_ACQ_STATE = "set_acquisition_state";

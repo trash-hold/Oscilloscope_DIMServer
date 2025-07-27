@@ -1,9 +1,13 @@
 from .AbstractInterfaces import Oscilloscope
+from enum import Enum
 import socket   # For providing connection to the HTTP server
 import numpy as np
 from bs4 import BeautifulSoup   # For decoding HTML response
 from common.exepction import * 
 
+class Slope(Enum):
+    RISING = "RISE"
+    FALLING = "FALL"
 
 class EthernetSocket():
     '''
@@ -226,21 +230,33 @@ class TDS3054C(Oscilloscope):
         except DeviceCommandError as e:
             raise DeviceCommandError("Failed to set horizontal offset.") from e
 
-
-    def set_trigger(self, source: str, level: float, slope: str) -> None:
+    def set_trigger_level(self, channel: int, level: float) -> None:
         try:
-            source_command = f"TRIGger:A:EDGE:SOUrce {source}"
-            self.write(source_command)
-            print(f"[TDS3054C] Executed: {source_command}")
-
             level_command = f"TRIGger:A:LEVel {level:g}"
             self.write(level_command)
             print(f"[TDS3054C] Executed: {level_command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to configure trigger settings.") from e
+    
+    def set_trigger_slope(self, slope: str) -> None:
+        try:
+            if slope == Slope.FALLING.value or slope == Slope.RISING.value:
+                slope_command = f"TRIGger:A:EDGE:SLOpe {slope}"
+                self.write(slope_command)
+                print(f"[TDS3054C] Executed: {slope_command}")
+            else:
+                raise DeviceCommandError("Failed to set the edge to: {slope}, check the driver's Slope classs")
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to configure trigger settings.") from e
+        
+    def set_trigger_channel(self, channel: int) -> None:
+        try:
+            if channel not in [1, 2, 3, 4]:
+                raise DeviceCommandError("Faile to change trigger channel to {channel} -- out of bounds")
+            source_command = f"TRIGger:A:EDGE:SOUrce CH{channel}"
+            self.write(source_command)
+            print(f"[TDS3054C] Executed: {source_command}")
             
-            slope_value = "RISE" if slope.lower() == 'rising' else 'FALL'
-            slope_command = f"TRIGger:A:EDGE:SLOpe {slope_value}"
-            self.write(slope_command)
-            print(f"[TDS3054C] Executed: {slope_command}")
         except DeviceCommandError as e:
             raise DeviceCommandError("Failed to configure trigger settings.") from e
         

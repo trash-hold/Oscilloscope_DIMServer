@@ -1,50 +1,18 @@
-
-import json     # For reading config files
 import time     # For implementing timeouts
 import logging
 from common.exepction import *
 from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
 
 class MeasurementManager():
-    def __init__(self, dev:Oscilloscope, json_file:str = None):
+    def __init__(self, dev:Oscilloscope):
         # Basic handles
         self.dev = dev     # Child of abstract class Oscilloscope
-        self.config = self.load_config(json_file) if json_file is not None else None
 
     def start_connection(self) -> None:
         try:
             self.dev.start_connection()
         except DeviceConnectionError as e:
             raise e
-
-    def load_config(self, json_file: str) -> dict:
-        '''
-        Connect and configure the oscilloscope according to the defined json file.
-        '''
-        try: 
-            # Load the file
-            config = None
-            with open(json_file, 'r') as file:
-                config = json.load(file)
-                file.close()
-
-            # Connect to device
-            if self.dev is None:
-                raise ConfigurationError("Device handle has not been provided to the manager.")
-            
-            self.dev.test_connection() 
-
-            self.dev.config(json_file)
-            self.config = config
-
-            print("Successfully configured the oscilloscope!")
-            return config
-        
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            raise ConfigurationError(f"Failed to load or parse config file: {json_file}") from e
-        
-        except DeviceError as e:
-            raise ConfigurationError("Failed to configure the device. Check connection and config values.") from e
     
     def execute_raw_command(self, command: str):
         """
@@ -95,6 +63,8 @@ class MeasurementManager():
                 level=t_settings.get('level', 0.0),
                 slope=t_settings.get('slope', 'Rising')
             )
+            self.dev.set_trigger_level(t_settings.get('source', 'CH1'), t_settings.get('level', 0.0))
+            self.dev.set_trigger_slope(t_settings.get('source', 'CH1'), t_settings.get('slope', 'RISE'))
             print("--- [MeasurementManager] Finished Applying Settings ---\n")
 
         except (DeviceError, ConfigurationError) as e:
@@ -150,4 +120,48 @@ class MeasurementManager():
         
         except (DeviceCommandError, ValueError) as e:
             raise AcquisitionError("A device error occurred during the acquisition sequence.") from e
-                
+        
+
+    def set_channel_state(self, channel_number: int, state: bool) -> None:
+        try:
+            self.dev.set_channel_state(channel_number, state)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+    def set_vertical_scale(self, channel_number: int, scale: float) -> None:
+        try:
+            self.dev.set_vertical_scale(channel_number, scale)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+    def set_channel_state(self, channel_number: int, state: bool) -> None:
+        try:
+            self.dev.set_channel_state(channel_number, state)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+    def set_trigger_slope(self, slope: str) -> None:
+        try:
+            self.dev.set_trigger_slope(slope)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+    def set_trigger_level(self, level: float) -> None:
+        try:
+            self.dev.set_trigger_level(level)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+    def set_trigger_channel(self, channel: int) -> None:
+        try:
+            self.dev.set_trigger_channel(channel)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+

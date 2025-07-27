@@ -32,6 +32,7 @@ class BackendWorker:
             # DIM commands
             Command.SET_CHANNEL_ENABLED: self._handle_set_channel_state,
             Command.SET_CHANNEL_SCALE: self._handle_set_channel_volts,
+            Command.SET_TRIGGER_CHANNEL: self._handle_set_trigger_channel,
             Command.SET_TRIGGER_SLOPE: self._handle_set_trigger_slope,
             Command.SET_TRIGGER_LEVEL: self._handle_set_trigger_level,
             Command.SET_ACQUISITION_STATE: self._handle_set_acq_state,
@@ -223,6 +224,9 @@ class BackendWorker:
 
     def _handle_set_trigger_level(self, params: dict) -> None:
         return self._execute_blocking_task(self.manager.set_trigger_level, float(params['level']))
+    
+    def _handle_set_trigger_channel(self, params: dict) -> None:
+        return self._execute_blocking_task(self.manager.set_trigger_channel, int(params['channel']))
 
     def _handle_set_acq_state(self, params: dict) -> str:
         state = params.get('state', '').upper()
