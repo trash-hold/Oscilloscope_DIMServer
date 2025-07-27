@@ -29,7 +29,7 @@ void register_all_commands(ZmqCommunicator& comm) {
     );
 
     // SCOPE/ACQUISITION/SET_STATE (String parameter)
-    new FlexibleJsonCommand(comm, Constants::ACQ_SET_STATE_CMD, "C", Constants::PY_SET_ACQ_STATE,
+    new FlexibleJsonCommand(comm, Constants::ACQ_SET_MODE_CMD, "C", Constants::PY_SET_ACQ_MODE,
         [](DimCommand* cmd, json& params) {
             params["state"] = cmd->getString();
         }

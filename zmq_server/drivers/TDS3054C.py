@@ -1,4 +1,5 @@
 from .AbstractInterfaces import Oscilloscope
+import time 
 from enum import Enum
 import socket   # For providing connection to the HTTP server
 import numpy as np
@@ -256,7 +257,7 @@ class TDS3054C(Oscilloscope):
             source_command = f"TRIGger:A:EDGE:SOUrce CH{channel}"
             self.write(source_command)
             print(f"[TDS3054C] Executed: {source_command}")
-            
+
         except DeviceCommandError as e:
             raise DeviceCommandError("Failed to configure trigger settings.") from e
         
@@ -315,6 +316,55 @@ class TDS3054C(Oscilloscope):
         
         except (DeviceCommandError, ValueError) as e:
             raise DeviceCommandError(f"Failed to get waveform from channel {channel}.") from e
+        
+    def sample(self, timeout: int = 60) -> np.array:
+        '''
+        Runs oscilloscope in single sequence mode and waits for a single acquistion -- has timeout feature. If you want to turn off the timeout set it to None
+        '''
+        try:
+
+            # Set oscilloscope into single sequence mode
+            # ============================================
+            # 1. Stop any current acquisition
+            self.write("ACQ:STATE STOP")
+            # 2. Turn on stop after single sequence
+            self.write("ACQ:STOPA SEQ")
+            # 3. Acquire data only on one sample
+            self.write("ACQ:MODE SAMPLE")
+
+            print("Starting acquisition")
+
+
+            # Get the samples
+            # ============================================
+            self.write("ACQ:STATE ON")
+            
+            # Variable for checking timeout
+            start_sample = time.time()
+            curr_sample = start_sample
+            query_no = 1
+            state = 1
+
+            # Loop for getting new sample
+            while(curr_sample - start_sample < timeout):
+                curr_sample = time.time()
+
+                # Check oscilloscope state every 10ms
+                if ((curr_sample - start_sample)*100 > query_no): 
+                    query_no += 1
+                    state = self.query("BUSY?")
+                    # Oscilloscope no longer busy = finished acq
+                    if int(state) == 0:
+                        # Make measurment
+                        res = self.get_waveform(1)
+                        return res
+            
+            # If no signal was caught
+            raise AcquisitionTimeoutError(f"Acquisition timed out after {timeout} seconds.")
+        
+        except (DeviceCommandError, ValueError) as e:
+            raise AcquisitionError("A device error occurred during the acquisition sequence.") from e
+        
 
 
     def build_msg(self, command: str) -> str:

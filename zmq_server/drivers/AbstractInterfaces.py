@@ -93,3 +93,9 @@ class Oscilloscope(ABC):
         '''
         pass
 
+    def sample(self, timeout: int = 60) -> str:
+            '''
+            Runs oscilloscope in single sequence mode and waits for a single acquistion -- optional implementation of timeout feature
+            '''
+            pass
+

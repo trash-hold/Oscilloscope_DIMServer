@@ -6,13 +6,14 @@ from enum import Enum, auto
 from manager.measurement_manager import MeasurementManager
 from common.exepction import *
 from server.zmq_manager import ZMQCommunicator
-from common.utils import Command 
+from common.utils import Command, AcquistionMode
 
 # This Enum defines the possible operational states of the worker.
 class WorkerState(Enum):
     IDLE = auto()
     BUSY = auto()
     CONTINUOUS_ACQUISITION = auto()
+    SINGLE = auto()
 
 class BackendWorker:
     """
@@ -35,14 +36,14 @@ class BackendWorker:
             Command.SET_TRIGGER_CHANNEL: self._handle_set_trigger_channel,
             Command.SET_TRIGGER_SLOPE: self._handle_set_trigger_slope,
             Command.SET_TRIGGER_LEVEL: self._handle_set_trigger_level,
-            Command.SET_ACQUISITION_STATE: self._handle_set_acq_state,
+            Command.SET_ACQUISITION_MODE: self._handle_set_acq_mode,
             Command.RAW_QUERY: self._handle_raw_query,
             Command.RAW_WRITE: self._handle_raw_write,
 
             # GUI/Local commands
             Command.APPLY_SETTINGS: self._handle_apply_settings,
             Command.START_CONTINUOUS_ACQUISITION: self._handle_start_continuous_acquisition,
-            Command.STOP_CONTINUOUS_ACQUISITION: self._handle_stop_continuous_acquisition,
+            Command.STOP_CONTINUOUS_ACQUISITION: self._handle_stop_acquisition,
             Command.GET_DEVICE_PROFILE: self._handle_get_device_profile,
         }
         logging.info("BackendWorker initialized.")
@@ -90,6 +91,9 @@ class BackendWorker:
                 # This runs only if no stop command was received in this loop iteration.
                 if self.state == WorkerState.CONTINUOUS_ACQUISITION:
                     self._perform_one_acquisition_cycle()
+                elif self.state == WorkerState.SINGLE:
+                    self._perform_one_acquisition_cycle() 
+                    self.set_state(WorkerState.IDLE)
 
             except KeyboardInterrupt:
                 logging.info("Shutdown signal received. Exiting...")
@@ -176,14 +180,22 @@ class BackendWorker:
         logging.info(f"STATE CHANGE: {self.state.name}")
         self.comm.publish_to_gui("backend_state", self.state.name)
 
-    def _perform_one_acquisition_cycle(self):
+    def _perform_one_acquisition_cycle(self, timeout=200):
         """Acquires data and publishes it using the communicator."""
         try:
-            waveform_data = self.manager.sample(timeout=10)
-            waveform_str = ",".join(map(str, waveform_data))
-            self.comm.publish_to_dim("waveform", waveform_str)
-            gui_payload = {"points": len(waveform_data), "data": waveform_data.tolist()}
-            self.comm.publish_to_gui("waveform", gui_payload)
+            waveform_data = self.manager.sample(timeout)
+            if waveform_data is not None:
+                waveform_str = ",".join(map(str, waveform_data))
+                self.comm.publish_to_dim("waveform", waveform_str)
+                
+                gui_payload = {"points": len(waveform_data), "data": waveform_data.tolist()}
+                self.comm.publish_to_gui("waveform", gui_payload)
+            else:
+                # If we received None, it's a failed acquisition.
+                logging.error("Acquisition failed: manager.sample() returned None.")
+                self.comm.publish_to_gui("error", "Acquisition failed at the driver level.")
+                # Stop the acquisition to prevent an infinite loop of failures.
+                self.set_state(WorkerState.IDLE)
         except AcquisitionTimeoutError as e:
             self.comm.publish_to_gui("error", f"Acquisition Timeout: {e}")
         except Exception as e:
@@ -204,14 +216,24 @@ class BackendWorker:
         
         self.set_state(WorkerState.CONTINUOUS_ACQUISITION)
         return "Continuous acquisition started."
-
-    def _handle_stop_continuous_acquisition(self, params: dict) -> str:
-        if self.state != WorkerState.CONTINUOUS_ACQUISITION:
-            # This is not a critical error, just a warning.
-            return "Warning: Continuous acquisition is not running."
+    
+    def _handle_start_single_acquisiton(self, params: dict) -> str:
+        if self.state != WorkerState.IDLE:
+            raise PermissionError(f"Cannot start acquisition from the current state: {self.state.name}")
         
-        self.set_state(WorkerState.IDLE)
-        return "Continuous acquisition stopped."
+        self.set_state(WorkerState.SINGLE)
+        return "Continuous acquisition started."
+
+          
+    def _handle_stop_acquisition(self, params: dict) -> str:
+            # Only stop if in a state that is actively acquiring.
+            if self.state not in [WorkerState.CONTINUOUS_ACQUISITION, WorkerState.SINGLE]:
+                return "Warning: Acquisition is not currently running."
+            
+            self.set_state(WorkerState.IDLE)
+            return "Acquisition stopped."
+
+    
 
     def _handle_set_channel_state(self, params: dict) -> None:
         return self._execute_blocking_task(self.manager.set_channel_state, params['channel'], bool(params['enabled']))
@@ -228,12 +250,14 @@ class BackendWorker:
     def _handle_set_trigger_channel(self, params: dict) -> None:
         return self._execute_blocking_task(self.manager.set_trigger_channel, int(params['channel']))
 
-    def _handle_set_acq_state(self, params: dict) -> str:
+    def _handle_set_acq_mode(self, params: dict) -> str:
         state = params.get('state', '').upper()
-        if state == 'RUN':
+        if state == AcquistionMode.CONTINUOUS.value:
             return self._handle_start_continuous_acquisition({})
-        elif state == 'STOP':
-            return self._handle_stop_continuous_acquisition({})
+        elif state == AcquistionMode.SINGLE.value:
+            return self._handle_start_single_acquisiton({})
+        elif state == AcquistionMode.OFF.value:
+            return self._handle_stop_acquisition({})
         raise ValueError(f"Invalid acquisition state: {state}")
 
     def _handle_get_device_profile(self, params: dict) -> dict:

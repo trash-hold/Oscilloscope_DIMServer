@@ -1,7 +1,7 @@
 namespace Constants {
     // DIM Server and Service Names
     constexpr const char* SERVER_NAME = "OscilloscopeServer";
-    constexpr const char* REPLY_SERVICE = "SCOPE/REPLY";
+    constexpr const char* REPLY_SERVICE = "SCOPE/STATE";
     constexpr const char* STATE_SERVICE = "SCOPE/STATE";
     constexpr const char* WAVEFORM_SERVICE = "SCOPE/WAVEFORM";
 
@@ -12,7 +12,7 @@ namespace Constants {
     constexpr const char* TRIG_SET_CHANNEL_CMD = "SCOPE/TRIGGER/SET_CHANNEL";
     constexpr const char* TRIG_SET_SLOPE_CMD = "SCOPE/TRIGGER/SET_SLOPE";
     constexpr const char* TRIG_SET_LEVEL_CMD = "SCOPE/TRIGGER/SET_LEVEL";
-    constexpr const char* ACQ_SET_STATE_CMD = "SCOPE/ACQUISITION/SET_STATE";
+    constexpr const char* ACQ_SET_MODE_CMD = "SCOPE/ACQUISITION/SET_MODE";
 
     // ZMQ Endpoints and Topics
     constexpr const char* ZMQ_ROUTER_ENDPOINT = "tcp://*:5555";
@@ -38,7 +38,7 @@ namespace Constants {
     constexpr const char* PY_SET_TRIG_CHANNEL = "set_trigger_channel";
     constexpr const char* PY_SET_TRIG_SLOPE = "set_trigger_slope";
     constexpr const char* PY_SET_TRIG_LEVEL = "set_trigger_level";
-    constexpr const char* PY_SET_ACQ_STATE = "set_acquisition_state";
+    constexpr const char* PY_SET_ACQ_MODE = "set_acquisition_mode";
     constexpr const char* PY_RAW_QUERY = "raw_query";
     constexpr const char* PY_RAW_WRITE = "raw_write";
 }

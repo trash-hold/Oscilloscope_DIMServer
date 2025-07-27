@@ -49,7 +49,7 @@ class Command(Enum):
     SET_TRIGGER_CHANNEL = "set_trigger_channel"
     SET_TRIGGER_SLOPE = "set_trigger_slope"
     SET_TRIGGER_LEVEL = "set_trigger_level"
-    SET_ACQUISITION_STATE = "set_acquisition_state"
+    SET_ACQUISITION_MODE = "set_acquisition_mode"
     RAW_QUERY = "raw_query"
     RAW_WRITE = "raw_write"
 
@@ -58,3 +58,8 @@ class Command(Enum):
     START_CONTINUOUS_ACQUISITION = "start_continuous_acquisition"
     STOP_CONTINUOUS_ACQUISITION = "stop_continuous_acquisition"
     GET_DEVICE_PROFILE = "get_device_profile"
+
+class AcquistionMode(Enum):
+    CONTINUOUS = "CONT"
+    SINGLE = "SINGLE"
+    OFF = "OFF"
