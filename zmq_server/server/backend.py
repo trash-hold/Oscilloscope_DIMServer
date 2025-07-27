@@ -6,6 +6,7 @@ from enum import Enum, auto
 from manager.measurement_manager import MeasurementManager
 from common.exepction import *
 from server.zmq_manager import ZMQCommunicator
+from common.utils import Command 
 
 # This Enum defines the possible operational states of the worker.
 class WorkerState(Enum):
@@ -28,20 +29,20 @@ class BackendWorker:
 
         # This map connects command strings to the methods that handle them.
         self.COMMAND_MAP = {
-            # DIM commands - names aligned with C++ Constants.h
-            'set_channel_enabled': self._handle_set_channel_state,
-            'set_channel_scale': self._handle_set_channel_volts,
-            'set_trigger_slope': self._handle_set_trigger_slope,
-            'set_trigger_level': self._handle_set_trigger_level,
-            'set_acquisition_state': self._handle_set_acq_state,
-            'raw_query': self._handle_raw_query,    # NEW specific handler
-            'raw_write': self._handle_raw_write,   # NEW specific handler
+            # DIM commands
+            Command.SET_CHANNEL_ENABLED: self._handle_set_channel_state,
+            Command.SET_CHANNEL_SCALE: self._handle_set_channel_volts,
+            Command.SET_TRIGGER_SLOPE: self._handle_set_trigger_slope,
+            Command.SET_TRIGGER_LEVEL: self._handle_set_trigger_level,
+            Command.SET_ACQUISITION_STATE: self._handle_set_acq_state,
+            Command.RAW_QUERY: self._handle_raw_query,
+            Command.RAW_WRITE: self._handle_raw_write,
 
-            # GUI/Local commands (these are defined by the GUI's needs)
-            'apply_settings': self._handle_apply_settings,
-            'start_continuous_acquisition': self._handle_start_continuous_acquisition,
-            'stop_continuous_acquisition': self._handle_stop_continuous_acquisition,
-            'get_device_profile': self._handle_get_device_profile,
+            # GUI/Local commands
+            Command.APPLY_SETTINGS: self._handle_apply_settings,
+            Command.START_CONTINUOUS_ACQUISITION: self._handle_start_continuous_acquisition,
+            Command.STOP_CONTINUOUS_ACQUISITION: self._handle_stop_continuous_acquisition,
+            Command.GET_DEVICE_PROFILE: self._handle_get_device_profile,
         }
         logging.info("BackendWorker initialized.")
 
@@ -102,44 +103,45 @@ class BackendWorker:
 
     def _dispatch_request(self, request: dict) -> dict:
         """
-        Parses a request, checks state, calls the appropriate handler,
-        and returns a standardized JSON reply dictionary.
+        It converts the incoming command string into a PythonCommand member before looking it up in the map.
         """
-        command_name = request.get("command", "[unknown]")
-        logging.debug(f"Dispatching request for command '{command_name}' in state {self.state.name}")
+        command_str = request.get("command")
+        logging.debug(f"Dispatching request for command string '{command_str}' in state {self.state.name}")
 
         try:
-            if command_name == "[unknown]":
+            if not command_str:
                 raise ValueError("Request dictionary is missing the 'command' field.")
+            
+            # --- Convert the incoming string to an Enum member ---
+            command_enum = Command(command_str)
             
             params = request.get("params", {})
 
-            if self.state == WorkerState.CONTINUOUS_ACQUISITION and command_name != 'stop_continuous_acquisition':
-                raise PermissionError("Command not allowed during continuous acquisition.")
-            
             if self.state == WorkerState.BUSY:
                 raise PermissionError("Device is busy with a previous command.")
 
-            handler = self.COMMAND_MAP.get(command_name)
+            # --- Look up the handler using the Enum member ---
+            handler = self.COMMAND_MAP.get(command_enum)
+            
+            # This check is now almost redundant, as the Enum conversion
+            # already validates the command, but it's good for safety.
             if not handler:
-                raise NotImplementedError(f"Command '{command_name}' is not implemented.")
+                raise NotImplementedError(f"Command '{command_enum.name}' is valid but has no handler.")
 
             result = handler(params)
             reply = {"status": "ok", "payload": result if result is not None else "Success"}
 
-        except (ValueError, TypeError) as e:
-            reply = {"status": "error", "message": f"Invalid parameters: {e}"}
+        except ValueError:
+            # This block now catches invalid command strings from the Enum conversion.
+            reply = {"status": "error", "message": f"Unknown command: '{command_str}'"}
         except PermissionError as e:
             reply = {"status": "error", "message": str(e)}
-        except NotImplementedError as e:
-            reply = {"status": "error", "message": str(e)}
         except Exception as e:
-            logging.critical(f"Error processing command '{command_name}': {e}", exc_info=True)
+            logging.critical(f"Error processing command '{command_str}': {e}", exc_info=True)
             reply = {"status": "error", "message": f"Internal Python error: {e}"}
 
-        logging.debug(f"Returning reply for '{command_name}': {reply}")
+        logging.debug(f"Returning reply for '{command_str}': {reply}")
         return reply
-
 
     def _handle_raw_query(self, params: dict) -> str:
         """Handles a raw query command by executing it through the manager."""
@@ -196,10 +198,17 @@ class BackendWorker:
         return self._execute_blocking_task(self.manager.apply_settings, params)
 
     def _handle_start_continuous_acquisition(self, params: dict) -> str:
+        if self.state != WorkerState.IDLE:
+            raise PermissionError(f"Cannot start acquisition from the current state: {self.state.name}")
+        
         self.set_state(WorkerState.CONTINUOUS_ACQUISITION)
         return "Continuous acquisition started."
 
     def _handle_stop_continuous_acquisition(self, params: dict) -> str:
+        if self.state != WorkerState.CONTINUOUS_ACQUISITION:
+            # This is not a critical error, just a warning.
+            return "Warning: Continuous acquisition is not running."
+        
         self.set_state(WorkerState.IDLE)
         return "Continuous acquisition stopped."
 

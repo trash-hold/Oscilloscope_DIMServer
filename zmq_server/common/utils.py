@@ -4,6 +4,8 @@ from drivers.TDS3054C import TDS3054C
 from drivers.AbstractInterfaces import Oscilloscope
 from common.exepction import ConfigurationError
 
+from enum import Enum
+
 # This dictionary maps a string name to the driver class
 DRIVER_MAP = {
     "TDS3054C": TDS3054C,
@@ -31,3 +33,27 @@ def create_driver(driver_name: str, connection_params: dict) -> Oscilloscope:
         
     print(f"Creating instance of driver: {driver_name}")
     return driver_class(connection_params)
+
+
+
+class Command(Enum):
+    """
+    Defines the command contract between the C++ server and the Python backend.
+    
+    The member name (e.g., SET_TRIGGER_SLOPE) is used internally in Python.
+    The member value (e.g., "set_trigger_slope") is the string sent over ZMQ.
+    """
+    # Commands originating from the DIM server
+    SET_CHANNEL_ENABLED = "set_channel_enabled"
+    SET_CHANNEL_SCALE = "set_channel_scale"
+    SET_TRIGGER_SLOPE = "set_trigger_slope"
+    SET_TRIGGER_LEVEL = "set_trigger_level"
+    SET_ACQUISITION_STATE = "set_acquisition_state"
+    RAW_QUERY = "raw_query"
+    RAW_WRITE = "raw_write"
+
+    # Commands originating from the local GUI
+    APPLY_SETTINGS = "apply_settings"
+    START_CONTINUOUS_ACQUISITION = "start_continuous_acquisition"
+    STOP_CONTINUOUS_ACQUISITION = "stop_continuous_acquisition"
+    GET_DEVICE_PROFILE = "get_device_profile"

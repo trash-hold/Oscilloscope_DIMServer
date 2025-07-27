@@ -75,8 +75,16 @@ class ZMQCommunicator:
         logging.info(f"Published to GUI on topic '{topic}'")
 
     def publish_to_dim(self, topic: str, payload: str):
-        """Publishes a simple string message (topic payload) to the DIM server."""
-        self.dim_pub_socket.send_string(f"{topic} {payload}")
+        """
+        Publishes a multipart message (topic, payload) to the DIM server.
+        """
+        # Step 1: Send the topic string, with the SNDMORE flag to indicate
+        # that another part of the message is coming.
+        self.dim_pub_socket.send_string(topic, zmq.SNDMORE)
+        
+        # Step 2: Send the payload string as the final part of the message.
+        self.dim_pub_socket.send_string(payload)
+        
         logging.info(f"Published to DIM on topic '{topic}'")
 
     def stop(self):
@@ -86,7 +94,7 @@ class ZMQCommunicator:
             sock.close(linger=0)
         self.context.term()
 
-        
+
 class GuiCommunicator(QObject):
     """
     Runs in a QThread within the GUI application. Handles all ZMQ communication
