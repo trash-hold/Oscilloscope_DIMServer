@@ -50,6 +50,8 @@ class Command(Enum):
     SET_TRIGGER_SLOPE = "set_trigger_slope"
     SET_TRIGGER_LEVEL = "set_trigger_level"
     SET_ACQUISITION_MODE = "set_acquisition_mode"
+    SET_ACQUISITION_TIMEOUT = "set_acquisition_timeout"
+    SET_ACQUISITION_IGNORE = "set_acquisition_ignore"
     RAW_QUERY = "raw_query"
     RAW_WRITE = "raw_write"
 

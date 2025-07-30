@@ -15,11 +15,10 @@ from gui.panels import ControlPanel, ActionPanel
 from common.exepction import * 
 
 class OscilloscopeControlGUI(QMainWindow):
-    measurement_state_changed = Signal(bool) # True if running, False if stopped
 
     def __init__(self, config_path, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Oscilloscope Control GUI (Decoupled)")
+        self.setWindowTitle("Oscilloscope Control GUI (State-Driven)")
         self.setGeometry(100, 100, 1000, 700)
 
         try:
@@ -35,9 +34,10 @@ class OscilloscopeControlGUI(QMainWindow):
             QMessageBox.critical(self, "Initialization Error", f"Failed to initialize the ZMQ communicator.\n{e}\n\nIs the backend process running?")
             sys.exit(1)
 
-        # The rest of the GUI creation process remains the same
         self.create_layout()
         self.connect_signals()
+
+        self.on_backend_state_update("IDLE")
 
     def create_layout(self) -> None:
         """Creates the main window layout using custom panels."""
@@ -61,6 +61,7 @@ class OscilloscopeControlGUI(QMainWindow):
     def connect_signals(self) -> None:
         """Connects all signals and slots for the application."""
         # --- Connect to the new ServerManager's signals ---
+        self.backend_communicator.backend_state_update.connect(self.on_backend_state_update)
         self.backend_communicator.status_update.connect(self.action_panel.update_status)
         self.backend_communicator.error_occurred.connect(self.handle_error)
         self.backend_communicator.waveform_update.connect(self.on_waveform_update)
@@ -71,10 +72,6 @@ class OscilloscopeControlGUI(QMainWindow):
         self.action_panel.stop_button.clicked.connect(self.on_stop_clicked)
         self.control_panel.settings_changed.connect(self.on_settings_changed)
 
-        # Connect internal signal for managing UI state
-        self.measurement_state_changed.connect(self.control_panel.set_enabled_controls)
-        self.measurement_state_changed.connect(self.action_panel.set_running_state)
-
 
     @Slot(str)
     def handle_error(self, error_message: str):
@@ -82,12 +79,31 @@ class OscilloscopeControlGUI(QMainWindow):
         Receives a simple error string from the backend and displays it.
         The backend is now responsible for formatting the error.
         """
-        self.action_panel.status_label.setText(f"Error!")
         self.action_panel.log_message(f"ERROR: {error_message}", "red")
         QMessageBox.warning(self, "Backend Error", error_message)
+
+    @Slot(str)
+    def on_backend_state_update(self, state_name: str):
+        """
+        Drives the UI state based on messages from the backend.
+        This is the single source of truth for the UI's state.
+        """
+        self.action_panel.update_status(f"Backend state: {state_name}")
         
-        # Assume any error from the backend stops the measurement
-        self.measurement_state_changed.emit(False)
+        if state_name == "CONTINUOUS_ACQUISITION":
+            self.control_panel.set_enabled_controls(False)
+            self.action_panel.set_running_state(True)
+        elif state_name == "IDLE":
+            self.control_panel.set_enabled_controls(True)
+            self.action_panel.set_running_state(False)
+        elif state_name == "BUSY":
+            self.control_panel.set_enabled_controls(False)
+            self.action_panel.set_running_state(True) # Visually similar to running
+            self.action_panel.start_button.setEnabled(False)
+            self.action_panel.stop_button.setEnabled(False)
+        else: # Handle other or unknown states
+            self.control_panel.set_enabled_controls(False)
+            self.action_panel.set_running_state(False)
 
     @Slot()
     def on_start_clicked(self):
@@ -95,16 +111,14 @@ class OscilloscopeControlGUI(QMainWindow):
         Sends the 'start' command to the backend.
         The backend is responsible for its own settings (like timeout).
         """
-        self.action_panel.update_status("Sending 'start' command to backend...")
+        self.action_panel.log_message("Sending 'start' command...", "gray")
         self.backend_communicator.start_continuous()
-        self.measurement_state_changed.emit(True)
 
     @Slot()
     def on_stop_clicked(self):
         """Sends the 'stop' command to the backend."""
-        self.action_panel.update_status("Sending 'stop' command to backend...")
+        self.action_panel.log_message("Sending 'stop' command...", "gray")
         self.backend_communicator.stop_continuous()
-        self.measurement_state_changed.emit(False)
 
     @Slot(dict)
     def on_settings_changed(self, settings: dict):
@@ -118,7 +132,6 @@ class OscilloscopeControlGUI(QMainWindow):
         # This is where you would update a plot widget
         points = waveform_data.get('points', 0)
         self.action_panel.log_message(f"Received waveform with {points} points.", "blue")
-        # self.plot_widget.update_data(waveform_data['data'])
 
     @Slot(dict)
     def on_command_reply(self, reply: dict):
@@ -128,7 +141,6 @@ class OscilloscopeControlGUI(QMainWindow):
         if status == "ok":
             self.action_panel.log_message(f"Backend reply: {payload}", "gray")
         else:
-            # This path is for logical errors, not exceptions
             message = reply.get("message", "Unknown error.")
             self.action_panel.log_message(f"Backend command error: {message}", "orange")
 

@@ -71,19 +71,12 @@ class MeasurementManager():
             # Re-raise as a configuration error to be caught by the worker
             raise ConfigurationError(f"Failed to apply settings to device: {e}") from e
         
-
-    def set_channel_state(self, channel_number: int, state: bool) -> None:
-        try:
-            self.dev.set_channel_state(channel_number, state)
-        except DeviceError as e:
-            logging.error(f"Device command set_channel_state failed: {e}")
-            raise e
         
     def set_vertical_scale(self, channel_number: int, scale: float) -> None:
         try:
             self.dev.set_vertical_scale(channel_number, scale)
         except DeviceError as e:
-            logging.error(f"Device command set_channel_state failed: {e}")
+            logging.error(f"Device command set_vertical_scale failed: {e}")
             raise e
         
     def set_channel_state(self, channel_number: int, state: bool) -> None:
@@ -97,28 +90,40 @@ class MeasurementManager():
         try:
             self.dev.set_trigger_slope(slope)
         except DeviceError as e:
-            logging.error(f"Device command set_channel_state failed: {e}")
+            logging.error(f"Device command set_trigger_slope failed: {e}")
             raise e
         
     def set_trigger_level(self, level: float) -> None:
         try:
             self.dev.set_trigger_level(level)
         except DeviceError as e:
-            logging.error(f"Device command set_channel_state failed: {e}")
+            logging.error(f"Device command set_trigger_level failed: {e}")
             raise e
         
     def set_trigger_channel(self, channel: int) -> None:
         try:
             self.dev.set_trigger_channel(channel)
         except DeviceError as e:
-            logging.error(f"Device command set_channel_state failed: {e}")
+            logging.error(f"Device command set_trigger_state failed: {e}")
             raise e
         
     def sample(self, timeout: int) -> None:
         try:
-            return self.dev.sample()
+            return self.dev.sample(timeout)
         except DeviceError as e:
             logging.error(f"Device command set_channel_state failed: {e}")
             raise e
         
-
+    def get_waveform(self, channel:int):
+        try:
+            return self.dev.get_waveform(channel)
+        except DeviceError as e:
+            logging.error(f"Device command get_waveform failed: {e}")
+            raise e
+        
+    def active_channels(self) -> list:
+        try:
+            return self.dev.active_channels()
+        except DeviceError as e:
+            logging.error(f"Device command active_channels failed: {e}")
+            raise e

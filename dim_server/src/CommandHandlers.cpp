@@ -1,5 +1,6 @@
 #include "CommandHandlers.h"
 #include "ZMQCommunicator.h"
+#include "DimServices.h"
 #include "Constants.h"
 
 using json = nlohmann::json;

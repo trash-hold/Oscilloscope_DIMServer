@@ -24,6 +24,10 @@ class BackendWorker:
         self.manager = manager
         self.state = WorkerState.IDLE
         self.device_profile = device_profile
+
+        # Flags and acq settings
+        self.timeout_period = 200
+        self.ignore_timeout = False
         
         # The worker owns a communicator instance to handle all ZMQ logic.
         self.comm = ZMQCommunicator(config)
@@ -36,6 +40,8 @@ class BackendWorker:
             Command.SET_TRIGGER_CHANNEL: self._handle_set_trigger_channel,
             Command.SET_TRIGGER_SLOPE: self._handle_set_trigger_slope,
             Command.SET_TRIGGER_LEVEL: self._handle_set_trigger_level,
+            Command.SET_ACQUISITION_TIMEOUT: self._handle_set_timeout_period,
+            Command.SET_ACQUISITION_IGNORE: self._handle_set_ignore_timeout,
             Command.SET_ACQUISITION_MODE: self._handle_set_acq_mode,
             Command.RAW_QUERY: self._handle_raw_query,
             Command.RAW_WRITE: self._handle_raw_write,
@@ -180,25 +186,48 @@ class BackendWorker:
         logging.info(f"STATE CHANGE: {self.state.name}")
         self.comm.publish_to_gui("backend_state", self.state.name)
 
-    def _perform_one_acquisition_cycle(self, timeout=200):
+    def _perform_one_acquisition_cycle(self):
         """Acquires data and publishes it using the communicator."""
         try:
-            waveform_data = self.manager.sample(timeout)
-            if waveform_data is not None:
-                waveform_str = ",".join(map(str, waveform_data))
-                self.comm.publish_to_dim("waveform", waveform_str)
-                
-                gui_payload = {"points": len(waveform_data), "data": waveform_data.tolist()}
-                self.comm.publish_to_gui("waveform", gui_payload)
-            else:
-                # If we received None, it's a failed acquisition.
-                logging.error("Acquisition failed: manager.sample() returned None.")
-                self.comm.publish_to_gui("error", "Acquisition failed at the driver level.")
-                # Stop the acquisition to prevent an infinite loop of failures.
-                self.set_state(WorkerState.IDLE)
+            gui_payload_for_cycle = {}
+            active_channels = self.manager.active_channels()
+
+            # Start Acquisition
+            self.manager.sample(self.timeout_period)
+
+            # 2. Loop through each active channel and sample it.
+            for channel_num in active_channels:
+                print(channel_num)
+                print(int(channel_num))
+                # This call now blocks for only one channel's worth of data.
+                waveform_data = self.manager.get_waveform(int(channel_num))
+
+                if waveform_data is not None:
+                    # 3. Publish to DIM server immediately for this channel.
+                    dim_topic = f"waveform_ch{channel_num}"
+                    dim_payload_str = ",".join(['{:.6E}'.format(num) for num in waveform_data])
+                    print("Lengths + {0}", len(dim_payload_str))
+                    self.comm.publish_to_dim(dim_topic, dim_payload_str)
+
+                    # 4. Add this channel's data to the collection for the GUI.
+                    gui_payload_for_cycle[channel_num] = waveform_data.tolist()
+                else:
+                    logging.warning(f"Received no data for active channel {channel_num}.")
+
+            # 5. After the loop, send one consolidated update to the GUI.
+            if gui_payload_for_cycle:
+                self.comm.publish_to_gui("waveform", gui_payload_for_cycle)
+
         except AcquisitionTimeoutError as e:
+            logging.error(f"Acquisition Timeout on a channel: {e}")
             self.comm.publish_to_gui("error", f"Acquisition Timeout: {e}")
+
+            if not self.ignore_timeout:
+                self.set_state(WorkerState.IDLE)
+            else:
+                logging.warning("Timeout occurred, but continuing acquisition as per 'ignore_timeout' setting.")
         except Exception as e:
+            logging.critical(f"Critical error in acquisition cycle: {e}", exc_info=True)
             self.comm.publish_to_gui("error", f"Error in acquisition cycle: {e}")
             self.set_state(WorkerState.IDLE)
 
@@ -233,8 +262,6 @@ class BackendWorker:
             self.set_state(WorkerState.IDLE)
             return "Acquisition stopped."
 
-    
-
     def _handle_set_channel_state(self, params: dict) -> None:
         return self._execute_blocking_task(self.manager.set_channel_state, params['channel'], bool(params['enabled']))
 
@@ -250,6 +277,26 @@ class BackendWorker:
     def _handle_set_trigger_channel(self, params: dict) -> None:
         return self._execute_blocking_task(self.manager.set_trigger_channel, int(params['channel']))
 
+    def _handle_set_timeout_period(self, params: dict) -> str:
+        """Updates the acquisition timeout period."""
+        period = params.get('level')
+        if period is None:
+            raise ValueError("Parameter 'period' is required.")
+        
+        self.timeout_period = float(period)
+        logging.info(f"Acquisition timeout period set to {self.timeout_period} ms.")
+        return f"Timeout set to {self.timeout_period} ms."
+
+    def _handle_set_ignore_timeout(self, params: dict) -> str:
+        """Updates the flag to ignore timeouts in continuous mode."""
+        ignore = params.get('state')
+        if ignore is None:
+            raise ValueError("Parameter 'ignore' (boolean) is required.")
+        
+        self.ignore_timeout = bool(ignore)
+        logging.info(f"Ignore timeout set to {self.ignore_timeout}.")
+        return f"Ignore timeout set to {self.ignore_timeout}."
+    
     def _handle_set_acq_mode(self, params: dict) -> str:
         state = params.get('state', '').upper()
         if state == AcquistionMode.CONTINUOUS.value:

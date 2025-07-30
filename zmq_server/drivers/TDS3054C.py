@@ -184,7 +184,41 @@ class TDS3054C(Oscilloscope):
 
         except (DeviceCommunicationError, InvalidParameterError) as e:
             raise DeviceCommandError(f"Write command '{cmd}' failed.") from e
+    
+    def active_channels(self) -> list:
+        '''
+        Returns active channels in form of list: [1, 3] etc.
+        '''
+        try:
+            '''
+            might return :SELECT:CH1 1;CH2 1;CH3 0;CH4 0;MATH 0;
+            REF1 0;REF2 0;REF3 0;REF4 0;CONTROL CH1, indicating that channel 1 and 2
+            are displayed on the screen and channel 1 is the selected (control) waveform.
+            '''
+            raw_reply = self.query("SELECT?")
+
+            # The data is separated with ;
+            split_reply = raw_reply.replace('\n', '').strip().split(';')
+
+            # Now check only the first four elements as they correspond to the channels state
+            active_channels = []
+            for i in range(0, 5):
+                if split_reply[i] == "1": 
+                    active_channels.append(i+1)
+
+            active_channels.sort() # Return in a consistent order, e.g., [2, 4]
+            return active_channels
+
+        except Exception as e:
+            DeviceCommandError(f"Failed to get active channels from device: {e}", exc_info=True)
+            return []
+
+
+
+        except (DeviceCommunicationError, InvalidParameterError) as e:
+            raise DeviceCommandError(f"Couldn't acquire active channels") from e
         
+
     
     def set_channel_state(self, channel: int, enabled: bool) -> None:
         try:
@@ -253,7 +287,7 @@ class TDS3054C(Oscilloscope):
     def set_trigger_channel(self, channel: int) -> None:
         try:
             if channel not in [1, 2, 3, 4]:
-                raise DeviceCommandError("Faile to change trigger channel to {channel} -- out of bounds")
+                raise DeviceCommandError(f"Failed to change trigger channel to {0} -- out of bounds", channel)
             source_command = f"TRIGger:A:EDGE:SOUrce CH{channel}"
             self.write(source_command)
             print(f"[TDS3054C] Executed: {source_command}")
@@ -288,15 +322,18 @@ class TDS3054C(Oscilloscope):
             yzero_str = self.query('WFMPRE:YZERO?')
             yoff_str = self.query('WFMPRE:YOFF?')
 
+            print(ymult_str)
             ymult = float(ymult_str)
             yzero = float(yzero_str)
             yoff = float(yoff_str)
 
             print("TBI time step")
-
+            
+            start = time.time()
             # Acquire the data points
             raw_data = self.query('CURVE?')
 
+            print(f"DATA ACQ timed: {0}", time.time() - start)
             true_waveform = []
             # Process the data
             if dataformat == 'ASCII':
@@ -317,7 +354,7 @@ class TDS3054C(Oscilloscope):
         except (DeviceCommandError, ValueError) as e:
             raise DeviceCommandError(f"Failed to get waveform from channel {channel}.") from e
         
-    def sample(self, timeout: int = 60) -> np.array:
+    def sample(self, timeout: int = 60) -> bool:
         '''
         Runs oscilloscope in single sequence mode and waits for a single acquistion -- has timeout feature. If you want to turn off the timeout set it to None
         '''
@@ -355,9 +392,8 @@ class TDS3054C(Oscilloscope):
                     state = self.query("BUSY?")
                     # Oscilloscope no longer busy = finished acq
                     if int(state) == 0:
-                        # Make measurment
-                        res = self.get_waveform(1)
-                        return res
+                        # ACQ correct
+                        return
             
             # If no signal was caught
             raise AcquisitionTimeoutError(f"Acquisition timed out after {timeout} seconds.")
@@ -403,3 +439,4 @@ class TDS3054C(Oscilloscope):
             # If parsing fails, return the raw HTML for debugging
             print(f"Raw HTML: {html_bytes.decode(errors='ignore')}")
             raise ParsingError("Could not find response textarea in device's HTML response.")
+        

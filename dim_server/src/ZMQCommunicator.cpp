@@ -1,8 +1,13 @@
 #include "ZMQCommunicator.h"
 #include "DimServices.h"
 #include "Constants.h"
+
+// Standard CPP libraries
 #include <iostream>
 #include <chrono>
+#include <memory>
+
+// Outside dependencies
 #include <zmq_addon.hpp>
 #include <nlohmann/json.hpp>
 
@@ -14,11 +19,13 @@ ZmqCommunicator::ZmqCommunicator(ReplyService& service) :
     router_socket(context, zmq::socket_type::router),
     sub_socket(context, zmq::socket_type::sub),
     reply_svc(service),
-    state_svc(Constants::STATE_SERVICE, state_buffer),
-    waveform_svc(Constants::WAVEFORM_SERVICE, waveform_buffer)
+    state_svc(Constants::STATE_SERVICE, Constants::STATE_BUFFER_SIZE)
 {
-    state_buffer[0] = '\0';
-    waveform_buffer[0] = '\0';
+    // Create and store the 4 waveform services
+    for (int i = 0; i < Constants::OSC_NUM_CHANNELS; ++i) {
+        std::string service_name = Constants::WAVEFORM_SERVICE_BASE + std::to_string(i + 1);
+        waveform_svcs.push_back(std::make_unique<ProtectedDimService>(service_name, Constants::WAVEFORM_BUFFER_SIZE));
+    }
 }
 
 ZmqCommunicator::~ZmqCommunicator() {
@@ -28,8 +35,15 @@ ZmqCommunicator::~ZmqCommunicator() {
 void ZmqCommunicator::start(const std::string& router_endpoint, const std::string& sub_endpoint) {
     router_socket.bind(router_endpoint);
     sub_socket.connect(sub_endpoint);
+
     sub_socket.set(zmq::sockopt::subscribe, Constants::ZMQ_STATE_TOPIC);
-    sub_socket.set(zmq::sockopt::subscribe, Constants::ZMQ_WAVEFORM_TOPIC);
+
+    // Subscribe to each of the 4 new waveform topics
+    for (int i = 0; i < Constants::OSC_NUM_CHANNELS; ++i) {
+        std::string topic_name = Constants::ZMQ_WAVEFORM_TOPIC_BASE + std::to_string(i + 1);
+        sub_socket.set(zmq::sockopt::subscribe, topic_name);
+        std::cout << "Subscribed to ZMQ topic: " << topic_name << std::endl;
+    }
 
     running = true;
     router_thread = std::thread(&ZmqCommunicator::router_loop, this);
@@ -95,15 +109,25 @@ void ZmqCommunicator::subscribe_loop() {
             std::string payload = multipart_msg.popstr();
 
             if (topic == Constants::ZMQ_STATE_TOPIC) {
-                strncpy(state_buffer, payload.c_str(), sizeof(state_buffer) - 1);
-                state_buffer[sizeof(state_buffer) - 1] = '\0';
-                state_svc.updateService();
-            } else if (topic == Constants::ZMQ_WAVEFORM_TOPIC) {
-                strncpy(waveform_buffer, payload.c_str(), sizeof(waveform_buffer) - 1);
-                waveform_buffer[sizeof(waveform_buffer) - 1] = '\0';
-                waveform_svc.updateService();
+                state_svc.update(payload);
+            }
+            // Check if the topic is one of the waveform channels
+            else if (topic.rfind(Constants::ZMQ_WAVEFORM_TOPIC_BASE, 0) == 0) {
+                try {
+                    // Extract channel number from topic string (e.g., "waveform_ch1" -> 0)
+                    std::string ch_str = topic.substr(Constants::ZMQ_WAVEFORM_TOPIC_BASE.length());
+                    int ch_index = std::stoi(ch_str) - 1;
+
+                    if (ch_index >= 0 && ch_index < Constants::OSC_NUM_CHANNELS) {
+                        // Call the thread-safe update on the correct service
+                        waveform_svcs[ch_index]->update(payload);
+                    }
+                } catch (const std::exception& e) {
+                    // Handle cases like "waveform_chABC" or out-of-range index
+                    std::cerr << "Error processing topic '" << topic << "': " << e.what() << std::endl;
+                }
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Reduced sleep for better responsiveness
     }
 }

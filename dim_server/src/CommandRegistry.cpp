@@ -28,6 +28,20 @@ void register_all_commands(ZmqCommunicator& comm) {
         }
     );
 
+    // SCOPE/ACQUISITION/SET_TIMEOUT (Float parameter)
+    new FlexibleJsonCommand(comm, Constants::ACQ_SET_TIMEOUT_CMD, "F", Constants::PY_SET_ACQ_TIMEOUT,
+        [](DimCommand* cmd, json& params) {
+            params["level"] = cmd->getFloat();
+        }
+    );
+
+    // SCOPE/ACQUISITION/IGNORE_TIMEOUT (Char parameter -- interpreted as bool)
+    new FlexibleJsonCommand(comm, Constants::ACQ_SET_IGNORE_CMD, "C", Constants::PY_SET_ACQ_IGNORE,
+        [](DimCommand* cmd, json& params) {
+            params["state"] = cmd->getString();
+        }
+    );
+
     // SCOPE/ACQUISITION/SET_STATE (String parameter)
     new FlexibleJsonCommand(comm, Constants::ACQ_SET_MODE_CMD, "C", Constants::PY_SET_ACQ_MODE,
         [](DimCommand* cmd, json& params) {

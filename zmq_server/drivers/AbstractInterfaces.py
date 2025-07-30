@@ -45,10 +45,16 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
-    
     def set_channel(self, channel:int) ->  bool:
         '''
         Changes the channel used for the measurments/operations
+        '''
+        pass
+
+    @abstractmethod
+    def active_channels(self) ->  list:
+        '''
+        Returns all enabled channels
         '''
         pass
 
@@ -93,7 +99,7 @@ class Oscilloscope(ABC):
         '''
         pass
 
-    def sample(self, timeout: int = 60) -> str:
+    def sample(self, timeout: int = 60):
             '''
             Runs oscilloscope in single sequence mode and waits for a single acquistion -- optional implementation of timeout feature
             '''
