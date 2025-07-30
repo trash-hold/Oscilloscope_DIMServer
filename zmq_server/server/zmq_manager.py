@@ -23,7 +23,6 @@ class ZmqLogHandler(logging.Handler):
         try:
             self.pub_socket.send_string(self.topic, zmq.SNDMORE)
             self.pub_socket.send_string(log_message)
-            print(f"--- ZMQ HANDLER IS FIRING: Sending '{log_message}' on topic '{self.topic}' ---")
         except zmq.ZMQError as e:
             # If ZMQ fails, we can't log it through ZMQ, so print to stderr.
             import sys

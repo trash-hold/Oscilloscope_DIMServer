@@ -39,7 +39,8 @@ class GuiCommunicator(QObject):
                 # Block until a message is received
                 topic = sub_socket.recv_string()
                 payload = sub_socket.recv_string() # Assuming logs are strings now
-                print(f"--- GUI LISTENER RECEIVED: Topic='{topic}', Payload='{payload}' ---")
+                # For debug
+                #print(f"--- GUI LISTENER RECEIVED: Topic='{topic}', Payload='{payload}' ---")
 
                 if topic == "log":
                     self.log_received.emit(payload)

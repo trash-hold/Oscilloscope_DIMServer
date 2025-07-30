@@ -50,16 +50,11 @@ class Command(Enum):
     SET_TRIGGER_SLOPE = "set_trigger_slope"
     SET_TRIGGER_LEVEL = "set_trigger_level"
     SET_ACQUISITION_MODE = "set_acquisition_mode"
+    SET_ACQUISITION_TIMEDIV = "set_acquisition_timediv"
     SET_ACQUISITION_TIMEOUT = "set_acquisition_timeout"
     SET_ACQUISITION_IGNORE = "set_acquisition_ignore"
     RAW_QUERY = "raw_query"
     RAW_WRITE = "raw_write"
-
-    # Commands originating from the local GUI
-    APPLY_SETTINGS = "apply_settings"
-    START_CONTINUOUS_ACQUISITION = "start_continuous_acquisition"
-    STOP_CONTINUOUS_ACQUISITION = "stop_continuous_acquisition"
-    GET_DEVICE_PROFILE = "get_device_profile"
 
 class AcquistionMode(Enum):
     CONTINUOUS = "CONT"

@@ -66,11 +66,6 @@ class OscilloscopeMonitorGUI(QMainWindow):
         self.log_panel.log_message(f"CRITICAL: {error_message}")
         QMessageBox.warning(self, "Backend Error", error_message)
 
-    @Slot(dict)
-    def on_waveform_update(self, waveform_data: dict):
-        """Placeholder for future plot panel."""
-        self.log_panel.log_message("Received waveform data.", "green")
-
     def closeEvent(self, event):
         """Ensures the communicator thread is shut down cleanly."""
         self.backend_communicator.close()

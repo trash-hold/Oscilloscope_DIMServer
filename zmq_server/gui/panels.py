@@ -5,6 +5,7 @@ from PySide6.QtCore import Slot
 from PySide6.QtGui import QColor
 
 import pyqtgraph as pg
+import numpy as np
 
 class LogPanel(QWidget):
     """
@@ -56,6 +57,7 @@ class PlotPanel(QWidget):
     """
     A panel that holds and manages four separate plots for oscilloscope channels.
     """
+            
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -75,7 +77,7 @@ class PlotPanel(QWidget):
             plot_widget = pg.PlotWidget()
             plot_widget.setTitle(f"Channel {i}", color="w", size="10pt")
             plot_widget.setLabel('left', 'Voltage', units='V')
-            plot_widget.setLabel('bottom', 'Sample Number')
+            plot_widget.setLabel('bottom', 'Time', units='s')
             plot_widget.showGrid(x=True, y=True, alpha=0.3)
             
             # Create a data line item with a yellow pen
@@ -89,24 +91,38 @@ class PlotPanel(QWidget):
             main_layout.addWidget(plot_widget)
 
     @Slot(dict)
-    def update_waveforms(self, waveform_data: dict):
+    def update_waveforms(self, payload: dict):
         """
-        Receives waveform data and updates the corresponding plots.
-        The data is expected in a dictionary like: {'1': [y1, y2...], '3': [y1, y2...]}
+        Receives the combined payload and updates plots.
+        The payload is a dict: {'time_increment': float, 'waveforms': dict}
         """
-        # Iterate through all our plots (1 through 4)
+        for data_line in self.plots.values():
+            data_line.clear()
+            
+        time_increment = float(payload.get('time_increment', 0.0))
+        waveform_data = payload.get('waveforms', {})
+        
+        # We need a valid time increment to plot
+        if time_increment <= 0:
+            return
+
         for channel_num, data_line in self.plots.items():
             channel_key = str(channel_num)
 
-            # Check if the incoming data dictionary has data for this channel
             if channel_key in waveform_data:
-                y_points = waveform_data[channel_key]
-                # For now, we use the sample index for the x-axis.
-                # A future improvement could be to get the real time axis from the backend.
-                x_points = range(len(y_points))
-                
-                # Update the data for this channel's plot line
+                # --- THIS IS THE CRITICAL FIX ---
+                # 1. Convert the incoming list of y-points to a NumPy array.
+                #    Explicitly set the data type to float64 for robustness.
+                y_points = np.array(waveform_data[channel_key], dtype=np.float64)
+
+                # 2. Create the x-axis points as a NumPy array directly.
+                #    This is more efficient than a list comprehension.
+                x_points = np.arange(len(y_points)) * time_increment
+                # --------------------------------
+
+                # 3. Pass the NumPy arrays to setData.
                 data_line.setData(x_points, y_points)
             else:
-                # If no data for this channel was sent, clear the plot
                 data_line.clear()
+
+    
