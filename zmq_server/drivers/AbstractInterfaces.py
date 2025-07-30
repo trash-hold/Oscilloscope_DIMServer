@@ -79,6 +79,11 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
+    def get_horizontal_increment(self) -> float:
+        """Read the horizontal increment"""
+        pass
+
+    @abstractmethod
     def set_trigger_level(self, level: float) -> None:
         """Sets the trigger level"""
         pass

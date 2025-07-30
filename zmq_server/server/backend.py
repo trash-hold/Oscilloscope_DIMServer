@@ -1,11 +1,8 @@
-# backend.py
-
-import json
 import logging
 from enum import Enum, auto
 from manager.measurement_manager import MeasurementManager
 from common.exepction import *
-from server.zmq_manager import ZMQCommunicator
+from server.zmq_manager import ZMQCommunicator, ZmqLogHandler
 from common.utils import Command, AcquistionMode
 
 # This Enum defines the possible operational states of the worker.
@@ -32,6 +29,19 @@ class BackendWorker:
         # The worker owns a communicator instance to handle all ZMQ logic.
         self.comm = ZMQCommunicator(config)
 
+        # ZMQ logs 
+        root_logger = logging.getLogger()
+        zmq_handler = ZmqLogHandler(self.comm.gui_pub_socket)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        zmq_handler.setFormatter(formatter)
+
+        root_logger.addHandler(zmq_handler)
+
+        if root_logger.level > logging.DEBUG:
+            root_logger.setLevel(logging.DEBUG)
+
+        logging.info("ZMQ Log Handler initialized. Backend logs will now be sent to the GUI.")
+
         # This map connects command strings to the methods that handle them.
         self.COMMAND_MAP = {
             # DIM commands
@@ -40,17 +50,12 @@ class BackendWorker:
             Command.SET_TRIGGER_CHANNEL: self._handle_set_trigger_channel,
             Command.SET_TRIGGER_SLOPE: self._handle_set_trigger_slope,
             Command.SET_TRIGGER_LEVEL: self._handle_set_trigger_level,
+            Command.SET_ACQUISITION_TIMEDIV: self._handle_set_timediv,
             Command.SET_ACQUISITION_TIMEOUT: self._handle_set_timeout_period,
             Command.SET_ACQUISITION_IGNORE: self._handle_set_ignore_timeout,
             Command.SET_ACQUISITION_MODE: self._handle_set_acq_mode,
             Command.RAW_QUERY: self._handle_raw_query,
             Command.RAW_WRITE: self._handle_raw_write,
-
-            # GUI/Local commands
-            Command.APPLY_SETTINGS: self._handle_apply_settings,
-            Command.START_CONTINUOUS_ACQUISITION: self._handle_start_continuous_acquisition,
-            Command.STOP_CONTINUOUS_ACQUISITION: self._handle_stop_acquisition,
-            Command.GET_DEVICE_PROFILE: self._handle_get_device_profile,
         }
         logging.info("BackendWorker initialized.")
 
@@ -80,18 +85,6 @@ class BackendWorker:
                     
                     # Step 3: Send the reply back to DIM.
                     self.comm.reply_to_dim(reply)
-
-                # --- Process incoming commands from the GUI ---
-                # The code inside this 'if' block only runs when a message is received from the GUI.
-                if self.comm.gui_socket in sockets_with_data:
-                    # Step 1: Receive a request from the GUI. 'request' is defined here.
-                    request = self.comm.receive_from_gui()
-                    
-                    # Step 2: Process it immediately to get a reply.
-                    reply = self._dispatch_request(request)
-                    
-                    # Step 3: Send the reply back to the GUI.
-                    self.comm.reply_to_gui(reply)
 
                 # --- Handle Continuous Acquisition State ---
                 # This runs only if no stop command was received in this loop iteration.
@@ -189,7 +182,11 @@ class BackendWorker:
     def _perform_one_acquisition_cycle(self):
         """Acquires data and publishes it using the communicator."""
         try:
-            gui_payload_for_cycle = {}
+            gui_payload = {
+                "time_increment": None,
+                "waveforms": {}
+            }
+            time_div = None
             active_channels = self.manager.active_channels()
 
             # Start Acquisition
@@ -197,26 +194,29 @@ class BackendWorker:
 
             # 2. Loop through each active channel and sample it.
             for channel_num in active_channels:
-                print(channel_num)
-                print(int(channel_num))
                 # This call now blocks for only one channel's worth of data.
                 waveform_data = self.manager.get_waveform(int(channel_num))
+                if time_div is None:
+                    time_div = self.manager.get_horizontal_increment()
 
                 if waveform_data is not None:
                     # 3. Publish to DIM server immediately for this channel.
                     dim_topic = f"waveform_ch{channel_num}"
                     dim_payload_str = ",".join(['{:.6E}'.format(num) for num in waveform_data])
-                    print("Lengths + {0}", len(dim_payload_str))
                     self.comm.publish_to_dim(dim_topic, dim_payload_str)
 
                     # 4. Add this channel's data to the collection for the GUI.
-                    gui_payload_for_cycle[channel_num] = waveform_data.tolist()
+                    gui_payload['waveforms'][channel_num] = waveform_data.tolist()
                 else:
                     logging.warning(f"Received no data for active channel {channel_num}.")
+            
+            if time_div is not None:
+                self.comm.publish_to_dim("waveform_timediv", time_div)
+                gui_payload["time_increment"] = time_div
 
             # 5. After the loop, send one consolidated update to the GUI.
-            if gui_payload_for_cycle:
-                self.comm.publish_to_gui("waveform", gui_payload_for_cycle)
+            if gui_payload:
+                self.comm.publish_to_gui("waveform", gui_payload)
 
         except AcquisitionTimeoutError as e:
             logging.error(f"Acquisition Timeout on a channel: {e}")
@@ -238,6 +238,9 @@ class BackendWorker:
 
     def _handle_apply_settings(self, params: dict) -> None:
         return self._execute_blocking_task(self.manager.apply_settings, params)
+    
+    def _handle_set_timediv(self, params: dict) -> None:
+        return self._execute_blocking_task(self.manager.set_horizontal_scale, params['level'])
 
     def _handle_start_continuous_acquisition(self, params: dict) -> str:
         if self.state != WorkerState.IDLE:
@@ -251,7 +254,7 @@ class BackendWorker:
             raise PermissionError(f"Cannot start acquisition from the current state: {self.state.name}")
         
         self.set_state(WorkerState.SINGLE)
-        return "Continuous acquisition started."
+        return "Single acquisition started."
 
           
     def _handle_stop_acquisition(self, params: dict) -> str:

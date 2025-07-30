@@ -79,6 +79,20 @@ class MeasurementManager():
             logging.error(f"Device command set_vertical_scale failed: {e}")
             raise e
         
+    def set_horizontal_scale(self, scale: float) -> None:
+        try:
+            self.dev.set_horizontal_scale(scale)
+        except DeviceError as e:
+            logging.error(f"Device command set_trigger_slope failed: {e}")
+            raise e
+    
+    def get_horizontal_increment(self) -> float:
+        try:
+            return self.dev.get_horizontal_increment()
+        except DeviceError as e:
+            logging.error(f"Device command set_trigger_slope failed: {e}")
+            raise e
+        
     def set_channel_state(self, channel_number: int, state: bool) -> None:
         try:
             self.dev.set_channel_state(channel_number, state)

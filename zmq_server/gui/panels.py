@@ -1,125 +1,128 @@
-import time
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QComboBox, QDoubleSpinBox, QGroupBox, QTextEdit, QPushButton, QLabel, QSpinBox
+    QWidget, QVBoxLayout, QGroupBox, QTextEdit, QLabel
 )
-from PySide6.QtCore import Signal, Slot
-from gui.widgets import ChannelControls, HorizontalControls, TriggerControls
+from PySide6.QtCore import Slot
+from PySide6.QtGui import QColor
 
-class ControlPanel(QWidget):
-    settings_changed = Signal(dict)
+import pyqtgraph as pg
+import numpy as np
 
-    def __init__(self, device_config: dict, parent=None):
-        super().__init__(parent)
-        print("ControlPanel received device_config:", device_config) 
-
-        main_layout = QVBoxLayout()
-        self.setLayout(main_layout)
-
-        main_layout.setSpacing(15)
-
-        self.channel_widgets = []
-        
-        ch_groupbox = QGroupBox("Channel Settings")
-        ch_vbox_layout = QVBoxLayout()
-        for i in range(device_config.get('channel_count', 0)):
-            ch_widget = ChannelControls(i + 1, device_config['vertical_scales'])
-            self.channel_widgets.append(ch_widget)
-            ch_vbox_layout.addWidget(ch_widget)
-            ch_widget.settings_changed.connect(self._on_value_changed) 
-
-        ch_groupbox.setLayout(ch_vbox_layout)
-        
-        self.h_widget = HorizontalControls(device_config['horizontal_scales'])
-        h_groupbox = QGroupBox("Horizontal Settings")
-        h_vbox_layout = QVBoxLayout()
-        h_vbox_layout.addWidget(self.h_widget)
-        h_groupbox.setLayout(h_vbox_layout)
-        
-        self.t_widget = TriggerControls(device_config['trigger_sources'], device_config['trigger_slopes'])
-        t_groupbox = QGroupBox("Trigger Settings")
-        t_vbox_layout = QVBoxLayout()
-        t_vbox_layout.addWidget(self.t_widget)
-        t_groupbox.setLayout(t_vbox_layout)
-
-        main_layout.addWidget(ch_groupbox)
-        main_layout.addWidget(h_groupbox)
-        main_layout.addWidget(t_groupbox)
-        main_layout.addStretch()
-
-        self.h_widget.settings_changed.connect(self._update_horizontal_controls)
-        self.t_widget.settings_changed.connect(self._on_value_changed)
-
-        self._update_horizontal_controls()
-
-    @Slot()
-    def _update_horizontal_controls(self):
-        self.h_widget.update_offset_controls()
-        self._on_value_changed()
-
-    @Slot()
-    def _on_value_changed(self):
-        final_settings = {'channels': []}
-        for ch_widget in self.channel_widgets:
-            final_settings['channels'].append(ch_widget.get_settings())
-        final_settings['horizontal'] = self.h_widget.get_settings()
-        final_settings['trigger'] = self.t_widget.get_settings()
-        self.settings_changed.emit(final_settings)
-
-    @Slot(bool)
-    def set_enabled_controls(self, is_enabled: bool):
-        for child in self.findChildren(QWidget):
-            if isinstance(child, (QComboBox, QCheckBox, QDoubleSpinBox)):
-                child.setEnabled(not is_enabled)
-
-
-
-
-class ActionPanel(QWidget):
+class LogPanel(QWidget):
+    """
+    A panel dedicated to displaying the backend status and a stream of logs.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # --- All the widgets from the right side of the GUI now live here ---
-        self.status_label = QLabel("Ready.")
+        # --- Widgets ---
+        self.status_label = QLabel("Connecting to backend...")
+        self.status_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.start_button = QPushButton("Start Continuous Measurement")
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.setEnabled(False)
-        self.timeout_label = QLabel("Acquisition Timeout (s):")
-        self.timeout_spinbox = QSpinBox()
-        self.timeout_spinbox.setRange(1, 3600)
-        self.timeout_spinbox.setValue(10)
-        self.continue_on_timeout_checkbox = QCheckBox("Continue measurement on timeout")
 
-        # --- The layout logic also moves here ---
-        layout = QVBoxLayout()
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.log_view, 5)
-        timeout_layout = QHBoxLayout()
-        timeout_layout.addWidget(self.timeout_label)
-        timeout_layout.addWidget(self.timeout_spinbox)
-        layout.addLayout(timeout_layout)
-        layout.addWidget(self.continue_on_timeout_checkbox)
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.start_button)
-        button_layout.addWidget(self.stop_button)
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
+        # --- Layout ---
+        main_layout = QVBoxLayout()
+        self.setLayout(main_layout)
 
-    def log_message(self, message: str, color: str = "black"):
-        timestamp = time.strftime('%H:%M:%S')
-        colored_message = f'<font color="{color}">[{timestamp}] {message}</font>'
+        log_groupbox = QGroupBox("Live Logs")
+        log_layout = QVBoxLayout()
+        log_layout.addWidget(self.log_view)
+        log_groupbox.setLayout(log_layout)
+
+        main_layout.addWidget(self.status_label)
+        main_layout.addWidget(log_groupbox)
+
+    @Slot(str)
+    def log_message(self, message: str):
+        """Appends a raw message to the log view, determining color by content."""
+        color = "black"
+        if "ERROR" in message or "CRITICAL" in message:
+            color = "red"
+        elif "WARNING" in message:
+            color = "orange"
+        elif "INFO" in message:
+            color = "blue"
+        
+        colored_message = f'<font color="{color}">{message}</font>'
         self.log_view.append(colored_message)
 
     @Slot(str)
     def update_status(self, message: str):
-        self.status_label.setText(f"Status: {message}")
-        self.log_message(message, "blue")
+        """Updates the main status label at the top of the panel."""
+        self.status_label.setText(f"Backend Status: {message}")
 
-    @Slot(bool)
-    def set_running_state(self, is_running: bool):
-        """A slot to control the enabled state of widgets in this panel."""
-        self.start_button.setEnabled(not is_running)
-        self.stop_button.setEnabled(is_running)
-        self.timeout_spinbox.setEnabled(not is_running)
-        self.continue_on_timeout_checkbox.setEnabled(not is_running)
+
+class PlotPanel(QWidget):
+    """
+    A panel that holds and manages four separate plots for oscilloscope channels.
+    """
+            
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Use a dark background for plots
+        pg.setConfigOption('background', 'k')
+        pg.setConfigOption('foreground', 'w')
+
+        # --- Layout ---
+        main_layout = QVBoxLayout()
+        self.setLayout(main_layout)
+
+        self.plots = {} # Dictionary to hold our plot data lines
+
+        # --- Create 4 Plots ---
+        for i in range(1, 5):
+            # Create a plot widget
+            plot_widget = pg.PlotWidget()
+            plot_widget.setTitle(f"Channel {i}", color="w", size="10pt")
+            plot_widget.setLabel('left', 'Voltage', units='V')
+            plot_widget.setLabel('bottom', 'Time', units='s')
+            plot_widget.showGrid(x=True, y=True, alpha=0.3)
+            
+            # Create a data line item with a yellow pen
+            # We will update the data of this line item, which is very fast.
+            data_line = plot_widget.plot(pen='y')
+
+            # Store the data line for future updates
+            self.plots[i] = data_line
+
+            # Add the plot widget to our layout
+            main_layout.addWidget(plot_widget)
+
+    @Slot(dict)
+    def update_waveforms(self, payload: dict):
+        """
+        Receives the combined payload and updates plots.
+        The payload is a dict: {'time_increment': float, 'waveforms': dict}
+        """
+        for data_line in self.plots.values():
+            data_line.clear()
+            
+        time_increment = float(payload.get('time_increment', 0.0))
+        waveform_data = payload.get('waveforms', {})
+        
+        # We need a valid time increment to plot
+        if time_increment <= 0:
+            return
+
+        for channel_num, data_line in self.plots.items():
+            channel_key = str(channel_num)
+
+            if channel_key in waveform_data:
+                # --- THIS IS THE CRITICAL FIX ---
+                # 1. Convert the incoming list of y-points to a NumPy array.
+                #    Explicitly set the data type to float64 for robustness.
+                y_points = np.array(waveform_data[channel_key], dtype=np.float64)
+
+                # 2. Create the x-axis points as a NumPy array directly.
+                #    This is more efficient than a list comprehension.
+                x_points = np.arange(len(y_points)) * time_increment
+                # --------------------------------
+
+                # 3. Pass the NumPy arrays to setData.
+                data_line.setData(x_points, y_points)
+            else:
+                data_line.clear()
+
+    

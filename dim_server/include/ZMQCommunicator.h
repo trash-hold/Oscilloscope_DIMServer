@@ -32,6 +32,7 @@ class ZmqCommunicator {
     // Services
     ReplyService& reply_svc;
     ProtectedDimService state_svc;
+    ProtectedDimService timediv_svc;
     std::vector<std::unique_ptr<ProtectedDimService>> waveform_svcs;
 
 public:

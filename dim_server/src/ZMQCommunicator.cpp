@@ -19,7 +19,8 @@ ZmqCommunicator::ZmqCommunicator(ReplyService& service) :
     router_socket(context, zmq::socket_type::router),
     sub_socket(context, zmq::socket_type::sub),
     reply_svc(service),
-    state_svc(Constants::STATE_SERVICE, Constants::STATE_BUFFER_SIZE)
+    state_svc(Constants::STATE_SERVICE, Constants::STATE_BUFFER_SIZE),
+    timediv_svc(Constants::TIMEDIV_SERVICE, Constants::STATE_BUFFER_SIZE)
 {
     // Create and store the 4 waveform services
     for (int i = 0; i < Constants::OSC_NUM_CHANNELS; ++i) {
@@ -37,6 +38,7 @@ void ZmqCommunicator::start(const std::string& router_endpoint, const std::strin
     sub_socket.connect(sub_endpoint);
 
     sub_socket.set(zmq::sockopt::subscribe, Constants::ZMQ_STATE_TOPIC);
+    sub_socket.set(zmq::sockopt::subscribe, Constants::ZMQ_TIMEDIV_TOPIC);
 
     // Subscribe to each of the 4 new waveform topics
     for (int i = 0; i < Constants::OSC_NUM_CHANNELS; ++i) {
@@ -111,7 +113,9 @@ void ZmqCommunicator::subscribe_loop() {
             if (topic == Constants::ZMQ_STATE_TOPIC) {
                 state_svc.update(payload);
             }
-            // Check if the topic is one of the waveform channels
+            else if(topic == Constants::ZMQ_TIMEDIV_TOPIC){
+                timediv_svc.update(payload);
+            }
             else if (topic.rfind(Constants::ZMQ_WAVEFORM_TOPIC_BASE, 0) == 0) {
                 try {
                     // Extract channel number from topic string (e.g., "waveform_ch1" -> 0)

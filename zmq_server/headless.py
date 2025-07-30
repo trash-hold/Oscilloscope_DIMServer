@@ -1,19 +1,30 @@
 import json
 import logging
 import os
+import sys
 from manager.measurement_manager import MeasurementManager
 from server.backend import BackendWorker
 from common.utils import create_driver
 from common.exepction import *
 
-# Setup basic logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def main():
     """
     Initializes and runs the backend application.
     This script is the "Assembler" that builds the application from its components.
     """
+
+    log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG) # Set the lowest level to capture everything
+
+    # Create a handler to print logs to the console (for headless mode)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(log_formatter)
+    root_logger.addHandler(console_handler)
+
+    logging.info("Console logger initialized. Starting backend setup...")
+    
     try:
         # 1. Load Main Application Configuration
         app_config_path = '../secret/config.json'

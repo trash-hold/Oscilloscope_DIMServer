@@ -264,6 +264,17 @@ class TDS3054C(Oscilloscope):
             print(f"[TDS3054C] Executed: {command}")
         except DeviceCommandError as e:
             raise DeviceCommandError("Failed to set horizontal offset.") from e
+        
+
+    def get_horizontal_increment(self) -> float:
+        try:
+            command = f"WFMPre:XINcr?"
+            reply = self.query(command)
+            print("Increment: {0}",reply)
+            print(f"[TDS3054C] Executed: {command}")
+            return reply
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to set horizontal offset.") from e
 
     def set_trigger_level(self, channel: int, level: float) -> None:
         try:
@@ -327,7 +338,6 @@ class TDS3054C(Oscilloscope):
             yzero = float(yzero_str)
             yoff = float(yoff_str)
 
-            print("TBI time step")
             
             start = time.time()
             # Acquire the data points
@@ -370,7 +380,6 @@ class TDS3054C(Oscilloscope):
             self.write("ACQ:MODE SAMPLE")
 
             print("Starting acquisition")
-
 
             # Get the samples
             # ============================================
