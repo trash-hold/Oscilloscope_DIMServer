@@ -1,9 +1,14 @@
 from .AbstractInterfaces import Oscilloscope
+import time 
+from enum import Enum
 import socket   # For providing connection to the HTTP server
 import numpy as np
 from bs4 import BeautifulSoup   # For decoding HTML response
 from common.exepction import * 
 
+class Slope(Enum):
+    RISING = "RISE"
+    FALLING = "FALL"
 
 class EthernetSocket():
     '''
@@ -116,7 +121,7 @@ class TDS3054C(Oscilloscope):
             device_num = self.query("*IDN?")
             print("Connected to: {0}".format(device_num))
             
-            if "TDS3054C" in device_num:
+            if "TDS 3054C" in device_num:
                 return True
             
             raise UnexpectedDeviceError(f"The connected device identifies as '{device_num}', not TDS3054C.")
@@ -179,7 +184,41 @@ class TDS3054C(Oscilloscope):
 
         except (DeviceCommunicationError, InvalidParameterError) as e:
             raise DeviceCommandError(f"Write command '{cmd}' failed.") from e
+    
+    def active_channels(self) -> list:
+        '''
+        Returns active channels in form of list: [1, 3] etc.
+        '''
+        try:
+            '''
+            might return :SELECT:CH1 1;CH2 1;CH3 0;CH4 0;MATH 0;
+            REF1 0;REF2 0;REF3 0;REF4 0;CONTROL CH1, indicating that channel 1 and 2
+            are displayed on the screen and channel 1 is the selected (control) waveform.
+            '''
+            raw_reply = self.query("SELECT?")
+
+            # The data is separated with ;
+            split_reply = raw_reply.replace('\n', '').strip().split(';')
+
+            # Now check only the first four elements as they correspond to the channels state
+            active_channels = []
+            for i in range(0, 5):
+                if split_reply[i] == "1": 
+                    active_channels.append(i+1)
+
+            active_channels.sort() # Return in a consistent order, e.g., [2, 4]
+            return active_channels
+
+        except Exception as e:
+            DeviceCommandError(f"Failed to get active channels from device: {e}", exc_info=True)
+            return []
+
+
+
+        except (DeviceCommunicationError, InvalidParameterError) as e:
+            raise DeviceCommandError(f"Couldn't acquire active channels") from e
         
+
     
     def set_channel_state(self, channel: int, enabled: bool) -> None:
         try:
@@ -226,21 +265,33 @@ class TDS3054C(Oscilloscope):
         except DeviceCommandError as e:
             raise DeviceCommandError("Failed to set horizontal offset.") from e
 
-
-    def set_trigger(self, source: str, level: float, slope: str) -> None:
+    def set_trigger_level(self, channel: int, level: float) -> None:
         try:
-            source_command = f"TRIGger:A:EDGE:SOUrce {source}"
-            self.write(source_command)
-            print(f"[TDS3054C] Executed: {source_command}")
-
             level_command = f"TRIGger:A:LEVel {level:g}"
             self.write(level_command)
             print(f"[TDS3054C] Executed: {level_command}")
-            
-            slope_value = "RISE" if slope.lower() == 'rising' else 'FALL'
-            slope_command = f"TRIGger:A:EDGE:SLOpe {slope_value}"
-            self.write(slope_command)
-            print(f"[TDS3054C] Executed: {slope_command}")
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to configure trigger settings.") from e
+    
+    def set_trigger_slope(self, slope: str) -> None:
+        try:
+            if slope == Slope.FALLING.value or slope == Slope.RISING.value:
+                slope_command = f"TRIGger:A:EDGE:SLOpe {slope}"
+                self.write(slope_command)
+                print(f"[TDS3054C] Executed: {slope_command}")
+            else:
+                raise DeviceCommandError("Failed to set the edge to: {slope}, check the driver's Slope classs")
+        except DeviceCommandError as e:
+            raise DeviceCommandError("Failed to configure trigger settings.") from e
+        
+    def set_trigger_channel(self, channel: int) -> None:
+        try:
+            if channel not in [1, 2, 3, 4]:
+                raise DeviceCommandError(f"Failed to change trigger channel to {0} -- out of bounds", channel)
+            source_command = f"TRIGger:A:EDGE:SOUrce CH{channel}"
+            self.write(source_command)
+            print(f"[TDS3054C] Executed: {source_command}")
+
         except DeviceCommandError as e:
             raise DeviceCommandError("Failed to configure trigger settings.") from e
         
@@ -271,15 +322,18 @@ class TDS3054C(Oscilloscope):
             yzero_str = self.query('WFMPRE:YZERO?')
             yoff_str = self.query('WFMPRE:YOFF?')
 
+            print(ymult_str)
             ymult = float(ymult_str)
             yzero = float(yzero_str)
             yoff = float(yoff_str)
 
             print("TBI time step")
-
+            
+            start = time.time()
             # Acquire the data points
             raw_data = self.query('CURVE?')
 
+            print(f"DATA ACQ timed: {0}", time.time() - start)
             true_waveform = []
             # Process the data
             if dataformat == 'ASCII':
@@ -299,6 +353,54 @@ class TDS3054C(Oscilloscope):
         
         except (DeviceCommandError, ValueError) as e:
             raise DeviceCommandError(f"Failed to get waveform from channel {channel}.") from e
+        
+    def sample(self, timeout: int = 60) -> bool:
+        '''
+        Runs oscilloscope in single sequence mode and waits for a single acquistion -- has timeout feature. If you want to turn off the timeout set it to None
+        '''
+        try:
+
+            # Set oscilloscope into single sequence mode
+            # ============================================
+            # 1. Stop any current acquisition
+            self.write("ACQ:STATE STOP")
+            # 2. Turn on stop after single sequence
+            self.write("ACQ:STOPA SEQ")
+            # 3. Acquire data only on one sample
+            self.write("ACQ:MODE SAMPLE")
+
+            print("Starting acquisition")
+
+
+            # Get the samples
+            # ============================================
+            self.write("ACQ:STATE ON")
+            
+            # Variable for checking timeout
+            start_sample = time.time()
+            curr_sample = start_sample
+            query_no = 1
+            state = 1
+
+            # Loop for getting new sample
+            while(curr_sample - start_sample < timeout):
+                curr_sample = time.time()
+
+                # Check oscilloscope state every 10ms
+                if ((curr_sample - start_sample)*100 > query_no): 
+                    query_no += 1
+                    state = self.query("BUSY?")
+                    # Oscilloscope no longer busy = finished acq
+                    if int(state) == 0:
+                        # ACQ correct
+                        return
+            
+            # If no signal was caught
+            raise AcquisitionTimeoutError(f"Acquisition timed out after {timeout} seconds.")
+        
+        except (DeviceCommandError, ValueError) as e:
+            raise AcquisitionError("A device error occurred during the acquisition sequence.") from e
+        
 
 
     def build_msg(self, command: str) -> str:
@@ -337,3 +439,4 @@ class TDS3054C(Oscilloscope):
             # If parsing fails, return the raw HTML for debugging
             print(f"Raw HTML: {html_bytes.decode(errors='ignore')}")
             raise ParsingError("Could not find response textarea in device's HTML response.")
+        

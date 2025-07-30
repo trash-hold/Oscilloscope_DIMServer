@@ -1,50 +1,37 @@
-
-from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
-import json     # For reading config files
 import time     # For implementing timeouts
+import logging
 from common.exepction import *
+from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
 
 class MeasurementManager():
-    def __init__(self, dev:Oscilloscope, json_file:str = None):
+    def __init__(self, dev:Oscilloscope):
         # Basic handles
         self.dev = dev     # Child of abstract class Oscilloscope
-        self.config = self.load_config(json_file) if json_file is not None else None
 
     def start_connection(self) -> None:
         try:
             self.dev.start_connection()
         except DeviceConnectionError as e:
             raise e
-
-    def load_config(self, json_file: str) -> dict:
-        '''
-        Connect and configure the oscilloscope according to the defined json file.
-        '''
-        try: 
-            # Load the file
-            config = None
-            with open(json_file, 'r') as file:
-                config = json.load(file)
-                file.close()
-
-            # Connect to device
-            if self.dev is None:
-                raise ConfigurationError("Device handle has not been provided to the manager.")
-            
-            self.dev.test_connection() 
-
-            self.dev.config(json_file)
-            self.config = config
-
-            print("Successfully configured the oscilloscope!")
-            return config
-        
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            raise ConfigurationError(f"Failed to load or parse config file: {json_file}") from e
-        
-        except DeviceError as e:
-            raise ConfigurationError("Failed to configure the device. Check connection and config values.") from e
     
+    def execute_raw_command(self, command: str):
+        """
+        Executes a raw SCPI command on the device.
+        Determines whether to use query() or write() based on the command.
+        """
+        command = command.strip()
+        try:
+            if command.endswith('?'):
+                response = self.dev.query(command)
+                return response.strip()
+            else:
+                self.dev.write(command)
+                return "OK" # Return a simple confirmation for write commands
+        except DeviceError as e:
+            # Propagate device errors in a structured way
+            logging.error(f"Device command '{command}' failed: {e}")
+            raise e
+        
     def apply_settings(self, settings: dict):
         """
         Applies new measurement settings to the device by calling the
@@ -76,59 +63,67 @@ class MeasurementManager():
                 level=t_settings.get('level', 0.0),
                 slope=t_settings.get('slope', 'Rising')
             )
+            self.dev.set_trigger_level(t_settings.get('source', 'CH1'), t_settings.get('level', 0.0))
+            self.dev.set_trigger_slope(t_settings.get('source', 'CH1'), t_settings.get('slope', 'RISE'))
             print("--- [MeasurementManager] Finished Applying Settings ---\n")
 
         except (DeviceError, ConfigurationError) as e:
             # Re-raise as a configuration error to be caught by the worker
             raise ConfigurationError(f"Failed to apply settings to device: {e}") from e
         
-    
-    def sample(self, timeout: int = 60) -> None:
-        '''
-        Runs oscilloscope in single sequence mode and waits for a single acquistion -- has timeout feature. If you want to turn off the timeout set it to None
-        '''
-        try:
-            dev = self.dev
-
-            # Set oscilloscope into single sequence mode
-            # ============================================
-            # 1. Stop any current acquisition
-            dev.write("ACQ:STATE STOP")
-            # 2. Turn on stop after single sequence
-            dev.write("ACQ:STOPA SEQ")
-            # 3. Acquire data only on one sample
-            dev.write("ACQ:MODE SAMPLE")
-
-            print("Starting acquisition")
-
-
-            # Get the samples
-            # ============================================
-            dev.write("ACQ:STATE ON")
-            
-            # Variable for checking timeout
-            start_sample = time.time()
-            curr_sample = start_sample
-            query_no = 1
-            state = 1
-
-            # Loop for getting new sample
-            while(curr_sample - start_sample < timeout):
-                curr_sample = time.time()
-
-                # Check oscilloscope state every 10ms
-                if ((curr_sample - start_sample)*100 > query_no): 
-                    query_no += 1
-                    state = dev.query("BUSY?")
-                    # Oscilloscope no longer busy = finished acq
-                    if int(state) == 0:
-                        # Make measurment
-                        res = dev.get_waveform(1)
-                        return res
-            
-            # If no signal was caught
-            raise AcquisitionTimeoutError(f"Acquisition timed out after {timeout} seconds.")
         
-        except (DeviceCommandError, ValueError) as e:
-            raise AcquisitionError("A device error occurred during the acquisition sequence.") from e
-                
+    def set_vertical_scale(self, channel_number: int, scale: float) -> None:
+        try:
+            self.dev.set_vertical_scale(channel_number, scale)
+        except DeviceError as e:
+            logging.error(f"Device command set_vertical_scale failed: {e}")
+            raise e
+        
+    def set_channel_state(self, channel_number: int, state: bool) -> None:
+        try:
+            self.dev.set_channel_state(channel_number, state)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+    def set_trigger_slope(self, slope: str) -> None:
+        try:
+            self.dev.set_trigger_slope(slope)
+        except DeviceError as e:
+            logging.error(f"Device command set_trigger_slope failed: {e}")
+            raise e
+        
+    def set_trigger_level(self, level: float) -> None:
+        try:
+            self.dev.set_trigger_level(level)
+        except DeviceError as e:
+            logging.error(f"Device command set_trigger_level failed: {e}")
+            raise e
+        
+    def set_trigger_channel(self, channel: int) -> None:
+        try:
+            self.dev.set_trigger_channel(channel)
+        except DeviceError as e:
+            logging.error(f"Device command set_trigger_state failed: {e}")
+            raise e
+        
+    def sample(self, timeout: int) -> None:
+        try:
+            return self.dev.sample(timeout)
+        except DeviceError as e:
+            logging.error(f"Device command set_channel_state failed: {e}")
+            raise e
+        
+    def get_waveform(self, channel:int):
+        try:
+            return self.dev.get_waveform(channel)
+        except DeviceError as e:
+            logging.error(f"Device command get_waveform failed: {e}")
+            raise e
+        
+    def active_channels(self) -> list:
+        try:
+            return self.dev.active_channels()
+        except DeviceError as e:
+            logging.error(f"Device command active_channels failed: {e}")
+            raise e
