@@ -1,11 +1,8 @@
-# backend.py
-
-import json
 import logging
 from enum import Enum, auto
 from manager.measurement_manager import MeasurementManager
 from common.exepction import *
-from server.zmq_manager import ZMQCommunicator
+from server.zmq_manager import ZMQCommunicator, ZmqLogHandler
 from common.utils import Command, AcquistionMode
 
 # This Enum defines the possible operational states of the worker.
@@ -32,6 +29,19 @@ class BackendWorker:
         # The worker owns a communicator instance to handle all ZMQ logic.
         self.comm = ZMQCommunicator(config)
 
+        # ZMQ logs 
+        root_logger = logging.getLogger()
+        zmq_handler = ZmqLogHandler(self.comm.gui_pub_socket)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        zmq_handler.setFormatter(formatter)
+
+        root_logger.addHandler(zmq_handler)
+
+        if root_logger.level > logging.DEBUG:
+            root_logger.setLevel(logging.DEBUG)
+
+        logging.info("ZMQ Log Handler initialized. Backend logs will now be sent to the GUI.")
+
         # This map connects command strings to the methods that handle them.
         self.COMMAND_MAP = {
             # DIM commands
@@ -45,12 +55,6 @@ class BackendWorker:
             Command.SET_ACQUISITION_MODE: self._handle_set_acq_mode,
             Command.RAW_QUERY: self._handle_raw_query,
             Command.RAW_WRITE: self._handle_raw_write,
-
-            # GUI/Local commands
-            Command.APPLY_SETTINGS: self._handle_apply_settings,
-            Command.START_CONTINUOUS_ACQUISITION: self._handle_start_continuous_acquisition,
-            Command.STOP_CONTINUOUS_ACQUISITION: self._handle_stop_acquisition,
-            Command.GET_DEVICE_PROFILE: self._handle_get_device_profile,
         }
         logging.info("BackendWorker initialized.")
 
@@ -80,18 +84,6 @@ class BackendWorker:
                     
                     # Step 3: Send the reply back to DIM.
                     self.comm.reply_to_dim(reply)
-
-                # --- Process incoming commands from the GUI ---
-                # The code inside this 'if' block only runs when a message is received from the GUI.
-                if self.comm.gui_socket in sockets_with_data:
-                    # Step 1: Receive a request from the GUI. 'request' is defined here.
-                    request = self.comm.receive_from_gui()
-                    
-                    # Step 2: Process it immediately to get a reply.
-                    reply = self._dispatch_request(request)
-                    
-                    # Step 3: Send the reply back to the GUI.
-                    self.comm.reply_to_gui(reply)
 
                 # --- Handle Continuous Acquisition State ---
                 # This runs only if no stop command was received in this loop iteration.
