@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 
 class Oscilloscope(ABC):
 
@@ -44,10 +45,16 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
-    
     def set_channel(self, channel:int) ->  bool:
         '''
         Changes the channel used for the measurments/operations
+        '''
+        pass
+
+    @abstractmethod
+    def active_channels(self) ->  list:
+        '''
+        Returns all enabled channels
         '''
         pass
 
@@ -72,8 +79,18 @@ class Oscilloscope(ABC):
         pass
 
     @abstractmethod
-    def set_trigger(self, source: str, level: float, slope: str) -> None:
-        """Sets the main trigger parameters."""
+    def set_trigger_level(self, level: float) -> None:
+        """Sets the trigger level"""
+        pass
+
+    @abstractmethod
+    def set_trigger_slope(self, slope: str) -> None:
+        """"Sets the trigger slope"""
+        pass
+
+    @abstractmethod
+    def set_trigger_channel(self, channel: int) -> None:
+        """"Sets the trigger source"""
         pass
     
     def get_waveform(self, channel:int) -> str:
@@ -81,4 +98,10 @@ class Oscilloscope(ABC):
         Acquisition of registered waveform
         '''
         pass
+
+    def sample(self, timeout: int = 60):
+            '''
+            Runs oscilloscope in single sequence mode and waits for a single acquistion -- optional implementation of timeout feature
+            '''
+            pass
 

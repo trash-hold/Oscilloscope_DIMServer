@@ -71,6 +71,10 @@ class ZMQTimeoutError(ZMQCommunicationError):
     """Raised when a ZMQ socket poll times out waiting for a reply."""
     pass
 
+class ZMQTParseError(ZMQCommunicationError):
+    """Raised when a transfer from the ZMQ is not containting expected information"""
+    pass
+
 #====================================================================================
 # Backend errors
 #====================================================================================
