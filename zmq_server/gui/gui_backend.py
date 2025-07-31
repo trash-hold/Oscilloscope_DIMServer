@@ -1,6 +1,5 @@
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 import zmq
-import queue
 import logging
 import json
 

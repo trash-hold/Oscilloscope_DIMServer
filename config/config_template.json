@@ -1,0 +1,12 @@
+{
+    "//": "Endpoints for communication with the C++ DIM Server",
+    "dim_router_endpoint": "Same as Constants.h/ZMQ_ROUTER_ENDPOINT",
+    "dim_publish_endpoint": "Same as Constants.h/ZMQ_SUB_ENDPOINT",
+
+    "//": "Endpoints for communication with the local GUI",
+    "local_publish_bind_endpoint": "tcp://*:PORT_1", 
+    "local_publish_connect_address": "tcp://localhost:PORT_2",
+
+    "//": "Device and other settings",
+    "device_profile_path": "point to XXX_profile.json"
+}

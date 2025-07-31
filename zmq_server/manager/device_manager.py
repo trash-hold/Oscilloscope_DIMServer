@@ -1,9 +1,9 @@
 import time     # For implementing timeouts
 import logging
-from common.exepction import *
-from drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
+from zmq_server.common.exceptions import *
+from zmq_server.drivers.AbstractInterfaces import Oscilloscope     #Oscilloscope interface class
 
-class MeasurementManager():
+class DeviceManager():
     def __init__(self, dev:Oscilloscope):
         # Basic handles
         self.dev = dev     # Child of abstract class Oscilloscope

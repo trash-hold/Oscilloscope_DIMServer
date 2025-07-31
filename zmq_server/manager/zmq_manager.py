@@ -1,8 +1,6 @@
 import zmq
 import json
 import logging
-import queue
-from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 class ZmqLogHandler(logging.Handler):
     """

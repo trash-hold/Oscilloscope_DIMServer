@@ -4,7 +4,7 @@ from enum import Enum
 import socket   # For providing connection to the HTTP server
 import numpy as np
 from bs4 import BeautifulSoup   # For decoding HTML response
-from common.exepction import * 
+from zmq_server.common.exceptions import * 
 
 class Slope(Enum):
     RISING = "RISE"

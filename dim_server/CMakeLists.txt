@@ -72,17 +72,17 @@ FetchContent_MakeAvailable(cppzmq libzmq nlohmann_json)
 # ==========================================================
 
 # Add executable
-add_executable(my_dim_server ${SOURCES})
+add_executable(osc_dim_server ${SOURCES})
 
 # Link against the DIM library
-target_link_libraries(my_dim_server PRIVATE
+target_link_libraries(osc_dim_server PRIVATE
  ${DIM_LIBRARY}
  cppzmq
  Threads::Threads
  nlohmann_json::nlohmann_json
  )
 
- target_include_directories(my_dim_server PRIVATE
+ target_include_directories(osc_dim_server PRIVATE
     ${cppzmq_SOURCE_DIR}/include
     ${nlohmann_json_SOURCE_DIR}/include
 )

@@ -1,9 +1,9 @@
 import logging
 from enum import Enum, auto
-from manager.measurement_manager import MeasurementManager
-from common.exepction import *
-from server.zmq_manager import ZMQCommunicator, ZmqLogHandler
-from common.utils import Command, AcquistionMode
+from zmq_server.manager.device_manager import DeviceManager
+from zmq_server.common.exceptions import *
+from zmq_server.manager.zmq_manager import ZMQCommunicator, ZmqLogHandler
+from zmq_server.common.constants import Command, AcquistionMode
 
 # This Enum defines the possible operational states of the worker.
 class WorkerState(Enum):
@@ -17,7 +17,7 @@ class BackendWorker:
     The core of the headless backend. Manages application state and delegates
     all communication to its ZMQCommunicator instance.
     """
-    def __init__(self, manager: MeasurementManager, config: dict, device_profile: dict):
+    def __init__(self, manager: DeviceManager, config: dict, device_profile: dict):
         self.manager = manager
         self.state = WorkerState.IDLE
         self.device_profile = device_profile

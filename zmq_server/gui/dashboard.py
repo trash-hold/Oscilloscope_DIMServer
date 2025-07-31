@@ -7,13 +7,13 @@ from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QMessageBox, QS
 from PySide6.QtCore import Slot, Signal, Qt
 
 # Backend
-from server.gui_backend import ServerManager 
+from zmq_server.gui.gui_backend import ServerManager 
 
 # Custom UI panels
-from gui.panels import LogPanel, PlotPanel
+from zmq_server.gui.panels import LogPanel, PlotPanel
 
 # Error handling
-from common.exepction import * 
+from zmq_server.common.exceptions import * 
 
 class OscilloscopeMonitorGUI(QMainWindow):
 

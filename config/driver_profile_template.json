@@ -1,0 +1,14 @@
+{
+  "driver_name": "DEVICE_NAME",
+  "connection_type": "ethernet",
+  "connection_params": {
+    "ip": "xxx",
+    "port": "xxx"
+  },
+  
+  "channel_count": 4,
+  "vertical_scales": ["1V", "500mV", "200mV", "100mV", "50mV", "20mV", "10mV", "5mV", "2mV", "1mV"],
+  "horizontal_scales": ["1s", "500ms", "200ms", "100ms", "50ms", "1ms", "500us", "100us"],
+  "trigger_sources": ["CH1", "CH2", "CH3", "CH4"],
+  "trigger_slopes": ["Rising", "Falling"]
+}
