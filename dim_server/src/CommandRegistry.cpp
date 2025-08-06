@@ -43,9 +43,9 @@ void register_all_commands(ZmqCommunicator& comm) {
     );
 
     // SCOPE/ACQUISITION/IGNORE_TIMEOUT (Char parameter -- interpreted as bool)
-    new FlexibleJsonCommand(comm, Constants::ACQ_SET_IGNORE_CMD, "C", Constants::PY_SET_ACQ_IGNORE,
+    new FlexibleJsonCommand(comm, Constants::ACQ_SET_IGNORE_CMD, "I:1", Constants::PY_SET_ACQ_IGNORE,
         [](DimCommand* cmd, json& params) {
-            params["state"] = cmd->getString();
+            params["state"] = (cmd->getInt() != 0);
         }
     );
 
@@ -60,11 +60,11 @@ void register_all_commands(ZmqCommunicator& comm) {
     // --- Register Channel Commands using Lambdas ---
 
     // SCOPE/CHANNEL/SET_ENABLED (Channel + Value parameter)
-    new FlexibleJsonCommand(comm, Constants::CHAN_SET_ENABLED_CMD, "I:1;F:1", Constants::PY_SET_CHAN_ENABLED,
+    new FlexibleJsonCommand(comm, Constants::CHAN_SET_ENABLED_CMD, "I:1;I:1", Constants::PY_SET_CHAN_ENABLED,
         [](DimCommand* cmd, json& params) {
             auto* data = static_cast<ChannelCommandData*>(cmd->getData());
             params[Constants::JSON_CHANNEL] = data->channel;
-            params["enabled"] = (data->value != 0.0f); // Convert float to boolean for clarity
+            params["enabled"] = (data->value != 0); // Convert float to boolean for clarity
         }
     );
 
